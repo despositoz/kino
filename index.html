@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Кинодневник</title>
+<!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>Кинодневник</h1>
+
+<nav class="tabs">
+  <button id="tab-rate" class="tab on">Оценка</button>
+  <button id="tab-diary" class="tab">Дневник</button>
+</nav>
+
+<!-- ─── Экран «Оценка», шаг 1: форма ─── -->
+<main id="screen-rate">
+  <section id="stage-form">
+    <div class="card">
+      <label class="lbl" for="f-title">Фильм</label>
+      <input id="f-title" placeholder="Название" autocomplete="off">
+      <div class="row">
+        <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
+        <select id="f-genre"></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="lbl">Оценки</label>
+      <div id="sliders"><!-- слайдеры создаёт app.js --></div>
+    </div>
+
+    <div class="result">
+      <div id="r-score" class="score"></div>
+      <div id="r-stars" class="stars"></div>
+      <div id="r-verdict" class="verdict"></div>
+      <div id="r-personal" class="hint small"></div>
+    </div>
+
+    <div class="card">
+      <label class="lbl">Заметки для записи</label>
+      <textarea id="f-liked" placeholder="Что понравилось" rows="2"></textarea>
+      <textarea id="f-disliked" placeholder="Что не понравилось" rows="2"></textarea>
+      <textarea id="f-moment" placeholder="Запомнившийся момент или сцена" rows="2"></textarea>
+    </div>
+
+    <p id="form-err" class="err hidden"></p>
+    <button id="btn-next" class="btn">Дальше: запись</button>
+  </section>
+
+  <!-- ─── Экран «Оценка», шаг 2: промпт и сохранение ─── -->
+  <section id="stage-entry" class="hidden">
+    <div class="result">
+      <div id="e-score" class="score"></div>
+      <div id="e-stars" class="stars"></div>
+      <div id="e-verdict" class="verdict"></div>
+      <div id="e-title" class="hint small"></div>
+    </div>
+
+    <div class="card">
+      <label class="lbl">Промпт для Claude</label>
+      <p class="hint small">Скопируй промпт, отправь его Claude в чате, а готовый текст записи вставь в поле ниже.</p>
+      <textarea id="e-prompt" readonly rows="9"></textarea>
+      <button id="btn-copy" class="btn">Скопировать промпт</button>
+    </div>
+
+    <div class="card">
+      <label class="lbl">Готовая запись</label>
+      <textarea id="e-review" placeholder="Вставь сюда текст записи…" rows="5"></textarea>
+      <p id="entry-err" class="err hidden"></p>
+      <button id="btn-save" class="btn">Сохранить в дневник</button>
+      <button id="btn-save-empty" class="btn ghost">Сохранить без записи</button>
+      <button id="btn-back" class="btn ghost">← Назад к оценкам</button>
+    </div>
+  </section>
+</main>
+
+<!-- ─── Экран «Дневник» ─── -->
+<main id="screen-diary" class="hidden">
+  <p id="storage-note" class="hint small center hidden">
+    Открыто вне Telegram — записи сохраняются только в этом браузере.
+  </p>
+  <div class="card" id="diary-card">
+    <div id="diary-list"></div>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
