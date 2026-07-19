@@ -27,6 +27,11 @@
   --ease-develop: cubic-bezier(0.34, 1.56, 0.64, 1);
   --shadow-poster: 0 3px 10px rgba(44, 42, 40, .13);
   --shadow-raised: 0 10px 24px -18px rgba(44, 42, 40, .42);
+  --bottom-safe: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--tg-safe-area-inset-bottom, 0px),
+    var(--tg-content-safe-area-inset-bottom, 0px)
+  );
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -37,12 +42,14 @@ body {
   font: 15px/1.45 var(--font-sans);
   max-width: 560px;
   margin: 0 auto;
-  padding: 0 22px 170px;   /* снизу место под кнопку и вкладки */
+  padding: 0 22px calc(188px + var(--bottom-safe));
   min-height: 100vh;
   min-height: 100dvh;
+  overflow-x: hidden;
   isolation: isolate;
   transition: background-color var(--motion-ui) var(--ease-out), color var(--motion-fast) ease;
 }
+body:not(.has-action) { padding-bottom: calc(104px + var(--bottom-safe)); }
 
 /* Два фоновых слоя: микро-превью снизу, резкий кадр поверх него. */
 body.hero { background: #15141c; }
@@ -276,12 +283,21 @@ body.hero .progress i.on { background: #fff; }
   display: flex; flex-direction: column; align-items: center;
   padding: 14px 0 22px;
 }
-.stars-row { display: flex; gap: 5px; }
+.stars-row {
+  display: flex; gap: 5px;
+  transform: scale(var(--stars-scale, .9));
+  transform-origin: center;
+  transition: transform 180ms var(--ease-out), filter 180ms var(--ease-out);
+}
 .star { position: relative; font-size: 30px; line-height: 1; color: var(--star-dim); }
 .stars-row.big .star { font-size: 34px; }
 .star .fill {
   position: absolute; left: 0; top: 0; overflow: hidden;
-  color: var(--gold); white-space: nowrap;
+  color: var(--stars-color, #c9a876); white-space: nowrap;
+  transition: color 180ms var(--ease-out), text-shadow 180ms var(--ease-out);
+}
+.stars-row.is-perfect .star .fill {
+  text-shadow: 0 0 8px rgba(245, 185, 66, .58), 0 0 16px rgba(245, 185, 66, .26);
 }
 .stars-num { font-size: 16px; font-weight: 700; margin-top: 8px; }
 .stars-tag { font-size: 12.5px; font-weight: 600; color: var(--sub); margin-top: 1px; }
@@ -355,6 +371,83 @@ input[type=range].sc-slider:active::-moz-range-thumb {
   width: 100%; margin-top: 8px; padding: 13px; font: inherit; font-size: 14px; font-weight: 700;
   border: 1.5px solid var(--accent); border-radius: 14px;
   background: none; color: var(--accent); cursor: pointer;
+}
+
+/* ─── Лента: персональные инсайты ─── */
+#head-feed .head-title, #head-diary .head-title { font-size: 26px; }
+#screen-feed { padding-top: 2px; }
+.feed-list { display: flex; flex-direction: column; gap: 12px; }
+.feed-intro { padding: 1px 2px 3px; color: var(--sub); font-size: 12px; }
+.feed-empty {
+  min-height: calc(100dvh - 210px); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+}
+.feed-empty-mark {
+  margin-bottom: 16px; color: var(--accent); font-size: 22px;
+  letter-spacing: .22em; transform: translateX(.11em);
+}
+.feed-empty h2 {
+  max-width: 310px; margin-bottom: 9px; font: 700 24px/1.15 var(--font-display);
+  letter-spacing: -.015em; text-wrap: balance;
+}
+.feed-empty p {
+  max-width: 350px; margin-bottom: 24px; color: var(--sub);
+  font-size: 14px; line-height: 1.55; text-wrap: pretty;
+}
+.feed-empty-cta { width: min(100%, 300px); }
+.feed-error {
+  margin-top: 28px; padding: 16px; border-radius: 14px;
+  background: var(--panel); color: var(--sub); text-align: center;
+}
+.feed-card {
+  --feed-accent: var(--accent);
+  width: 100%; min-width: 0; min-height: 154px; position: relative;
+  display: flex; align-items: stretch; gap: 16px; overflow: hidden;
+  padding: 18px; border: 0; border-radius: 16px;
+  background: var(--card); color: var(--text); text-align: left; font: inherit;
+  box-shadow: 0 2px 7px rgba(44, 42, 40, .08), inset 0 -3px var(--feed-accent);
+  cursor: pointer; isolation: isolate;
+  animation: feedCardIn 320ms var(--ease-out) both;
+  animation-delay: calc(var(--feed-index) * 70ms);
+  transition: transform var(--motion-fast) var(--ease-out), background-color var(--motion-fast) ease;
+}
+.feed-card--taste {
+  min-height: 176px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+}
+.feed-card--genre {
+  background: color-mix(in srgb, var(--feed-accent) 8%, var(--card));
+}
+.feed-card--reminder, .feed-card--best {
+  display: grid; grid-template-columns: minmax(0, 1fr) 72px;
+}
+.feed-card-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.feed-card-label {
+  margin-bottom: 12px; color: var(--feed-accent); font-size: 12px; font-weight: 700;
+}
+.feed-card-title {
+  max-width: 19ch; margin-bottom: 8px; font: 700 20px/1.16 var(--font-display);
+  letter-spacing: -.015em; text-wrap: balance;
+}
+.feed-card-detail {
+  max-width: 46ch; color: var(--sub); font-size: 13.5px; line-height: 1.48;
+  text-wrap: pretty;
+}
+.feed-card-action {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 16px;
+  color: var(--feed-accent); font-size: 12.5px; font-weight: 750;
+}
+.feed-arrow {
+  width: 7px; height: 7px; border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor; transform: rotate(45deg);
+}
+.feed-poster {
+  width: 72px; height: 102px; align-self: center; border-radius: 10px;
+  background: var(--panel); box-shadow: var(--shadow-poster);
+}
+.feed-card.is-nudging { animation: feedNudge 120ms var(--ease-out) both; }
+@media (hover: hover) and (pointer: fine) {
+  .feed-card:hover { transform: translateY(-2px); }
 }
 
 /* ─── Дневник: статистика ─── */
@@ -433,16 +526,35 @@ body:not(.hero) #footer-action { background: linear-gradient(transparent, var(--
 #btn-save-empty { display: block; margin: 10px auto 0; }
 
 .tabbar {
-  display: flex; background: var(--card); border-top: 1px solid var(--line);
-  padding: 8px 22px calc(8px + env(safe-area-inset-bottom));
+  --tab-index: 1;
+  position: relative; isolation: isolate; overflow: hidden;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  min-height: calc(76px + var(--bottom-safe));
+  padding: 10px 18px calc(14px + var(--bottom-safe));
+  border-top: 1px solid rgba(120, 112, 104, .16);
+  background: rgba(255, 253, 251, .86);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  box-shadow: 0 -8px 20px -18px rgba(44, 42, 40, .42);
+}
+.tab-indicator {
+  position: absolute; z-index: 0; top: 10px; left: 18px;
+  width: calc((100% - 52px) / 3); height: 52px;
+  border-radius: 15px; pointer-events: none;
+  background: rgba(91, 79, 232, .11);
+  transform: translateX(calc(var(--tab-index) * (100% + 8px)));
+  transition: transform 300ms cubic-bezier(.22, 1, .36, 1), background-color 180ms ease;
 }
 .tabbtn {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 8px 0; border: 0; background: none; cursor: pointer;
+  position: relative; z-index: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 52px; padding: 6px 4px; border: 0; border-radius: 15px;
+  background: transparent; cursor: pointer;
   font: inherit; font-size: 11px; font-weight: 600; color: var(--sub);
 }
-.tabbtn { transition: color .2s ease, transform .2s ease; }
-.tabbtn.on { color: var(--accent); transform: translateY(-1px); }
+.tabbtn { transition: color 180ms ease, transform 100ms ease-out; }
+.tabbtn.on { color: var(--accent); }
+.tabbtn:active { transform: scale(.94); }
 
 /* иконки вкладок, нарисованы CSS-ом */
 .ic-plus { width: 18px; height: 18px; position: relative; }
@@ -454,19 +566,49 @@ body:not(.hero) #footer-action { background: linear-gradient(transparent, var(--
 .ic-chart i:nth-child(1) { height: 7px; }
 .ic-chart i:nth-child(2) { height: 12px; }
 .ic-chart i:nth-child(3) { height: 16px; }
+.ic-feed { width: 18px; height: 18px; display: grid; align-content: center; gap: 3px; }
+.ic-feed i { display: block; height: 3px; border-radius: 2px; background: currentColor; }
+.ic-feed i:nth-child(1) { width: 11px; }
+.ic-feed i:nth-child(2) { width: 18px; }
+.ic-feed i:nth-child(3) { width: 14px; }
 
 /* ─── Motion: короткие кинематографичные переходы ─── */
 @keyframes sceneIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
 @keyframes heroCopyIn { from { opacity: 0; transform: translateY(24px); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes feedCardIn {
+  from { opacity: .72; transform: translateY(8px) scale(.985); filter: blur(5px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes feedNudge {
+  45% { transform: translateX(4px) scale(.992); }
+  to { transform: none; }
+}
+@keyframes tabEnterFromRight {
+  from { opacity: .72; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tabEnterFromLeft {
+  from { opacity: .72; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tabCrossfade { from { opacity: .72; } to { opacity: 1; } }
 @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @keyframes lineGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-#screen-rate > section:not(.hidden), #screen-diary:not(.hidden) { animation: sceneIn var(--motion-ui) var(--ease-out) both; }
+.app-screen.tab-enter-from-right { animation: tabEnterFromRight 230ms cubic-bezier(.22, 1, .36, 1) both; }
+.app-screen.tab-enter-from-left { animation: tabEnterFromLeft 230ms cubic-bezier(.22, 1, .36, 1) both; }
+#screen-rate > section:not(.hidden) { animation: sceneIn var(--motion-ui) var(--ease-out) both; }
 .progress i { transition: background-color 180ms ease; }
 .crit-badge { transition: background-color .2s ease; }
 .film-detail { animation: sceneIn 220ms var(--ease-out) both; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; }
+  .feed-card { filter: none !important; }
+  .app-screen.tab-enter-from-right, .app-screen.tab-enter-from-left { animation-name: tabCrossfade; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .tabbar { background: var(--card); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
 /* ─── Redesign: личный кинодневник, а не форма ─── */
@@ -598,11 +740,8 @@ body.immersive:not(.hero) #footer-action {
   border-radius: 17px; background: var(--card); box-shadow: none;
 }
 
-/* легче главная кнопка, характернее нижняя навигация */
+/* легче главная кнопка */
 .primary { min-height: 54px; padding: 0 20px; border-radius: 20px; }
-.tabbar { gap: 8px; padding: 9px 18px calc(9px + env(safe-area-inset-bottom)); }
-.tabbtn { flex-direction: row; justify-content: center; gap: 7px; border-radius: 16px; padding: 10px 12px; }
-.tabbtn.on { background: #ece9fb; transform: none; }
 .ic-plus i:first-child { width: 3px; }
 .ic-plus i:last-child { height: 3px; }
 .ic-chart i { width: 4px; }
@@ -640,7 +779,12 @@ body.immersive:not(.hero) #footer-action {
   .tile { background: #29251f; }
   .tile:nth-child(2) { background: #30291f; }
   .tile:nth-child(3) { background: #202b27; }
-  .tabbtn.on { background: rgba(110,98,255,.16); }
+  .tabbar {
+    border-top-color: rgba(255,255,255,.08);
+    background: rgba(32,29,25,.86);
+    box-shadow: 0 -8px 20px -18px rgba(0,0,0,.72);
+  }
+  .tab-indicator { background: rgba(110,98,255,.18); }
 }
 
 @media (prefers-color-scheme: dark) and (hover: hover) and (pointer: fine) {

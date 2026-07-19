@@ -6,13 +6,13 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=opinion4">
+<link rel="stylesheet" href="style.css?v=iphone-tabs1">
 </head>
 <body>
 
 <!-- ─── Шапка: заголовок шага и прогресс (вкладка «Оценить») ─── -->
 <header id="header">
-  <div id="head-rate">
+  <div id="head-rate" class="hidden">
     <div class="head-row">
       <button id="btn-back" class="back-btn hidden" aria-label="Назад"><span class="chev"></span></button>
       <div>
@@ -22,6 +22,10 @@
     </div>
     <div id="progress" class="progress"><i></i><i></i><i></i><i></i></div>
   </div>
+  <div id="head-feed">
+    <div class="head-title">Лента</div>
+    <div class="head-sub">что заметил твой дневник</div>
+  </div>
   <div id="head-diary" class="hidden">
     <div class="head-title">Дневник</div>
     <div class="head-sub">твоя история кино</div>
@@ -29,7 +33,7 @@
 </header>
 
 <!-- ─── Вкладка «Оценить»: 4 шага ─── -->
-<main id="screen-rate">
+<main id="screen-rate" class="app-screen hidden">
 
   <!-- Шаг 1: какой фильм -->
   <section id="step-0">
@@ -125,8 +129,13 @@
   </section>
 </main>
 
+<!-- ─── Вкладка «Лента»: персональные инсайты из дневника ─── -->
+<main id="screen-feed" class="app-screen">
+  <div id="feed-list" class="feed-list" aria-live="polite"></div>
+</main>
+
 <!-- ─── Вкладка «Дневник»: статистика + записи ─── -->
-<main id="screen-diary" class="hidden">
+<main id="screen-diary" class="app-screen hidden">
   <p id="storage-note" class="ask-sub center hidden">
     Открыто вне Telegram — записи сохраняются только в этом браузере.
   </p>
@@ -167,13 +176,17 @@
 
 <!-- ─── Низ: главная кнопка шага + вкладки ─── -->
 <footer id="footer">
-  <div id="footer-action">
+  <div id="footer-action" class="hidden">
     <button id="btn-primary" class="primary">Далее</button>
     <button id="btn-save-empty" class="linkbtn hidden">Сохранить без записи</button>
   </div>
-  <nav class="tabbar">
-    <button id="tab-rate" class="tabbtn on">
+  <nav class="tabbar" aria-label="Основная навигация">
+    <span class="tab-indicator" aria-hidden="true"></span>
+    <button id="tab-rate" class="tabbtn">
       <span class="ic-plus"><i></i><i></i></span>Оценить
+    </button>
+    <button id="tab-feed" class="tabbtn on">
+      <span class="ic-feed"><i></i><i></i><i></i></span>Лента
     </button>
     <button id="tab-diary" class="tabbtn">
       <span class="ic-chart"><i></i><i></i><i></i></span>Дневник
@@ -181,6 +194,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=opinion5"></script>
+<script src="app.js?v=iphone-tabs1"></script>
 </body>
 </html>

@@ -132,13 +132,15 @@ const emptyForm = () => ({
 });
 
 let form = emptyForm();
-let tab = "rate";   // "rate" | "diary"
+let tab = "feed";   // "rate" | "feed" | "diary"
 let step = 0;       // 0 фильм · 1 оценки · 2 итог · 3 запись
 let expandedId = null;
 let searchTimer = null;
 let searchController = null;
+let popularLoaded = false;
 
 const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
+const TAB_INDEX = { rate: 0, feed: 1, diary: 2 };
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
 
@@ -346,21 +348,73 @@ function renderStars(container, five) {
     const pct = v >= 1 ? 100 : v >= 0.5 ? 50 : 0;
     container.children[i].querySelector(".fill").style.width = pct + "%";
   }
+
+  // Вся группа реагирует на итоговую оценку одинаково: чем она выше,
+  // тем звёзды крупнее и ярче. Значения ниже 1 остаются на минимуме 0.9.
+  const strength = Math.max(0, Math.min(1, (five - 1) / 4));
+  const scale = 0.9 + strength * 0.25;
+  const red = Math.round(201 + (245 - 201) * strength);
+  const green = Math.round(168 + (185 - 168) * strength);
+  const blue = Math.round(118 + (66 - 118) * strength);
+  container.style.setProperty("--stars-scale", scale.toFixed(3));
+  container.style.setProperty("--stars-color", `rgb(${red}, ${green}, ${blue})`);
+  container.classList.toggle("is-perfect", five === 5);
+  container.dataset.rating = String(five);
+}
+
+function ratingHapticBand(five) {
+  if (five >= 5) return "success";
+  if (five >= 3.5) return "rigid";
+  if (five >= 2) return "medium";
+  return "light";
+}
+
+function ratingThresholdHaptic(previousFive, nextFive) {
+  if (previousFive === nextFive) return;
+  const previousBand = ratingHapticBand(previousFive);
+  const nextBand = ratingHapticBand(nextFive);
+  if (previousBand === nextBand) return;
+  if (nextBand === "success") haptic("notification", "success");
+  else haptic("impact", nextBand);
 }
 
 // ─── Переключение вкладок и шагов ────────────────────────────────
 
-function showTab(name) {
+async function showTab(name) {
+  const previousTab = tab;
+  const changed = previousTab !== name;
+  const nextScreen = $("screen-" + name);
   tab = name;
   $("screen-rate").classList.toggle("hidden", name !== "rate");
+  $("screen-feed").classList.toggle("hidden", name !== "feed");
   $("screen-diary").classList.toggle("hidden", name !== "diary");
   $("head-rate").classList.toggle("hidden", name !== "rate");
+  $("head-feed").classList.toggle("hidden", name !== "feed");
   $("head-diary").classList.toggle("hidden", name !== "diary");
   $("footer-action").classList.toggle("hidden", name !== "rate");
   $("tab-rate").classList.toggle("on", name === "rate");
+  $("tab-feed").classList.toggle("on", name === "feed");
   $("tab-diary").classList.toggle("on", name === "diary");
+  document.querySelector(".tabbar").style.setProperty("--tab-index", TAB_INDEX[name]);
+  document.body.classList.toggle("has-action", name === "rate");
   syncAtmosphere();
-  if (name === "diary") renderDiary();
+
+  if (changed) {
+    nextScreen.classList.remove("tab-enter-from-left", "tab-enter-from-right");
+    void nextScreen.offsetWidth;
+    nextScreen.classList.add(TAB_INDEX[name] > TAB_INDEX[previousTab]
+      ? "tab-enter-from-right" : "tab-enter-from-left");
+    const finishTabMotion = (event) => {
+      if (event.target !== nextScreen) return;
+      nextScreen.classList.remove("tab-enter-from-left", "tab-enter-from-right");
+      nextScreen.removeEventListener("animationend", finishTabMotion);
+    };
+    nextScreen.addEventListener("animationend", finishTabMotion);
+  }
+
+  if (name === "rate" && !popularLoaded) loadPopular();
+  if (name === "feed") return renderFeed();
+  if (name === "diary") return renderDiary();
 }
 
 function syncAtmosphere() {
@@ -546,6 +600,7 @@ async function loadPopular() {
   try {
     const data = await tmdb("/movie/popular?page=1");
     renderMovies($("popular-list"), data.results || [], true);
+    popularLoaded = true;
     $("popular").classList.toggle("hidden", !!$("f-query").value.trim());
   } catch (e) {
     $("popular").classList.add("hidden");
@@ -652,12 +707,15 @@ function buildSliders() {
     const color = personal ? gold : accent;
     paintSlider(range, color);
     range.addEventListener("input", () => {
+      const previousFive = toFive(calcQuality(form.scores));
       badge.textContent = range.value;
       paintSlider(range, color);
       oninput(+range.value);
+      const nextFive = toFive(calcQuality(form.scores));
+      haptic("selection");
+      ratingThresholdHaptic(previousFive, nextFive);
       updateStars("1");
     });
-    range.addEventListener("change", () => haptic("selection"));
     wrap.append(top, range);
     box.append(wrap);
   };
@@ -757,6 +815,258 @@ async function saveEntry(review) {
   showTab("diary");
 }
 
+// ─── Лента: персональные инсайты из дневника ─────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const GENRE_IN_SENTENCE = {
+  "Хоррор": "хоррор", "Триллер": "триллер", "Драма": "драму",
+  "Фантастика": "фантастику", "Боевик": "боевик", "Комедия": "комедию",
+  "Детектив": "детектив", "Фэнтези": "фэнтези", "Анимация": "анимацию",
+  "Документальный": "документальное кино", "Другое": "фильмы этого жанра",
+};
+const TASTE_WORDS = {
+  plot: { high: "сюжет и сценарий", low: "к сюжету и сценарию" },
+  chars: { high: "персонажей и актёрскую игру", low: "к персонажам и актёрской игре" },
+  visual: { high: "визуал и режиссуру", low: "к визуалу и режиссуре" },
+  sound: { high: "звук и музыку", low: "к звуку и музыке" },
+  emotion: { high: "эмоциональное воздействие", low: "к эмоциональному воздействию" },
+};
+
+function filmTimestamp(film) {
+  const id = Number(film.id);
+  if (Number.isFinite(id) && id > 946684800000) return id;
+  const parts = String(film.date || "").split(".").map(Number);
+  if (parts.length === 3 && parts.every(Number.isFinite)) {
+    return new Date(parts[2], parts[1] - 1, parts[0]).getTime();
+  }
+  return 0;
+}
+
+function daysWord(days) {
+  const n10 = days % 10, n100 = days % 100;
+  const word = n10 === 1 && n100 !== 11 ? "день" :
+    n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? "дня" : "дней";
+  return `${days} ${word}`;
+}
+
+function yearsWord(years) {
+  if (years === 1) return "Год";
+  const n10 = years % 10, n100 = years % 100;
+  const word = n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? "года" : "лет";
+  return `${years} ${word}`;
+}
+
+function filmsWord(count) {
+  const n10 = count % 10, n100 = count % 100;
+  if (n10 === 1 && n100 !== 11) return "фильм";
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return "фильма";
+  return "фильмов";
+}
+
+function feedInsights(films) {
+  const now = Date.now();
+  const insights = [];
+
+  const averages = CRITERIA.map((criterion) => ({
+    id: criterion.id,
+    average: films.reduce((sum, film) => sum + Number(film.scores?.[criterion.id] || 0), 0) / films.length,
+  })).sort((a, b) => b.average - a.average);
+  const strongest = averages[0], strictest = averages[averages.length - 1];
+  const spread = strongest.average - strictest.average;
+  insights.push({
+    type: "taste",
+    score: 82,
+    label: "По твоим оценкам",
+    title: "Твой вкус",
+    detail: spread < 0.5
+      ? "Ты оцениваешь фильмы очень ровно — ни один критерий пока не перевешивает остальные."
+      : `Выше всего ты ценишь ${TASTE_WORDS[strongest.id].high}, а строже всего относишься ${TASTE_WORDS[strictest.id].low}.`,
+    action: "diary",
+    actionLabel: "Посмотреть статистику",
+  });
+
+  const genres = new Map();
+  films.forEach((film) => {
+    if (!filmTimestamp(film)) return;
+    const previous = genres.get(film.genre);
+    if (!previous || filmTimestamp(film) > filmTimestamp(previous)) genres.set(film.genre, film);
+  });
+  if (genres.size > 1) {
+    const oldestGenre = [...genres.entries()].map(([genre, film]) => ({
+      genre, film, days: Math.floor((now - filmTimestamp(film)) / DAY_MS),
+    })).sort((a, b) => b.days - a.days)[0];
+    if (oldestGenre.days >= 45) insights.push({
+      type: "genre",
+      score: 88 + Math.min(24, oldestGenre.days / 30),
+      genre: oldestGenre.genre,
+      label: "Пора вернуться",
+      title: `Ты давно не оценивал ${GENRE_IN_SENTENCE[oldestGenre.genre] || oldestGenre.genre.toLowerCase()}`,
+      detail: `Последняя запись была ${daysWord(oldestGenre.days)} назад. Может, следующий фильм будет из этого жанра?`,
+      action: "rate",
+      actionLabel: "Выбрать фильм",
+    });
+  }
+
+  const anniversaries = films.map((film) => {
+    const timestamp = filmTimestamp(film);
+    if (!timestamp) return null;
+    const days = Math.floor((now - timestamp) / DAY_MS);
+    const years = Math.max(1, Math.round(days / 365));
+    return { film, days, years, distance: Math.abs(days - years * 365) };
+  }).filter((item) => item && item.days >= 320 && item.distance <= 45)
+    .sort((a, b) => a.distance - b.distance);
+  if (anniversaries.length) {
+    const anniversary = anniversaries[0];
+    insights.push({
+      type: "reminder",
+      score: 105 - anniversary.distance / 3,
+      genre: anniversary.film.genre,
+      film: anniversary.film,
+      label: "Вспомнить и сравнить",
+      title: `${yearsWord(anniversary.years)} назад ты смотрел «${anniversary.film.title}»`,
+      detail: `Тогда ты поставил ${toFive(anniversary.film.quality).toFixed(1)} из 5. Интересно, совпадёт ли оценка сейчас?`,
+      action: "rerate",
+      actionLabel: "Переоценить фильм",
+    });
+  }
+
+  const byGenre = new Map();
+  films.forEach((film) => {
+    if (!byGenre.has(film.genre)) byGenre.set(film.genre, []);
+    byGenre.get(film.genre).push(film);
+  });
+  [...byGenre.entries()].filter(([, entries]) => entries.length >= 3)
+    .map(([genre, entries]) => ({
+      genre,
+      entries,
+      best: [...entries].sort((a, b) => b.quality - a.quality)[0],
+    }))
+    .sort((a, b) => b.entries.length - a.entries.length || b.best.quality - a.best.quality)
+    .slice(0, 2)
+    .forEach(({ genre, entries, best }) => insights.push({
+      type: "best",
+      score: 70 + entries.length + best.quality / 10,
+      genre,
+      film: best,
+      label: `${entries.length} ${filmsWord(entries.length)} в жанре`,
+      title: `Лучшее у тебя в жанре «${genre}»`,
+      detail: `«${best.title}» пока лидирует с оценкой ${toFive(best.quality).toFixed(1)} из 5.`,
+      action: "film",
+      actionLabel: "Открыть запись",
+    }));
+
+  return insights.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
+function feedCard(insight, index) {
+  const card = el("button", `feed-card feed-card--${insight.type}`);
+  card.type = "button";
+  card.style.setProperty("--feed-index", index);
+  card.style.setProperty("--feed-accent", insight.genre ? genreColor(insight.genre) : "var(--accent)");
+
+  const copy = el("span", "feed-card-copy");
+  copy.append(el("span", "feed-card-label", insight.label));
+  copy.append(el("span", "feed-card-title", insight.title));
+  copy.append(el("span", "feed-card-detail", insight.detail));
+  const action = el("span", "feed-card-action", insight.actionLabel);
+  action.append(el("i", "feed-arrow"));
+  copy.append(action);
+  card.append(copy);
+
+  if (insight.film?.poster) {
+    card.append(blurPicture(
+      insight.film.posterPreview || microPreview(insight.film.poster, "w92"),
+      insight.film.poster,
+      "feed-poster",
+      index < 2 ? "eager" : "lazy",
+    ));
+  }
+
+  card.addEventListener("click", () => activateFeedCard(card, insight));
+  return card;
+}
+
+function activateFeedCard(card, insight) {
+  if (card.dataset.busy) return;
+  card.dataset.busy = "true";
+  card.classList.add("is-nudging");
+  haptic("impact", "rigid");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  setTimeout(() => {
+    if (insight.action === "rerate") startReevaluation(insight.film);
+    else if (insight.action === "film") openDiaryFilm(insight.film);
+    else showTab(insight.action);
+    delete card.dataset.busy;
+  }, reduced ? 0 : 120);
+}
+
+async function openDiaryFilm(film) {
+  expandedId = film.id;
+  await showTab("diary");
+  const item = document.querySelector(`[data-film-id="${film.id}"]`);
+  if (item) item.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block: "center",
+  });
+}
+
+function startReevaluation(film) {
+  const fresh = emptyForm();
+  form = {
+    ...fresh,
+    title: film.title, year: film.year || "", genre: film.genre || GENRES[0],
+    tmdbId: film.tmdbId || null,
+    poster: film.poster || "", posterPreview: film.posterPreview || "",
+    backdrop: film.backdrop || "", backdropPreview: film.backdropPreview || "",
+    scores: { ...fresh.scores, ...(film.scores || {}) },
+    personal: Number(film.personal || 5),
+  };
+  $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
+  $("e-review").value = "";
+  $("sliders").innerHTML = "";
+  buildSliders();
+  syncGenreAccent(form.genre);
+  showTab("rate");
+  showSelectedMovie(!!film.tmdbId);
+  showStep(1);
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+async function renderFeed() {
+  const list = $("feed-list");
+  list.innerHTML = "";
+  let films;
+  try {
+    films = await store.getAll();
+  } catch (e) {
+    list.append(el("div", "feed-error", "Не удалось собрать ленту. Попробуй открыть её ещё раз."));
+    return;
+  }
+
+  if (films.length <= 2) {
+    const empty = el("section", "feed-empty");
+    empty.append(el("div", "feed-empty-mark", "•••"));
+    empty.append(el("h2", "", films.length ? "Лента уже присматривается" : "Здесь появится твоя лента"));
+    empty.append(el("p", "", films.length
+      ? `Ещё ${3 - films.length} ${films.length === 1 ? "оценки" : "оценка"} — и дневник начнёт замечать твои привычки и любимые жанры.`
+      : "Оцени несколько фильмов, и дневник начнёт находить закономерности в твоём вкусе."));
+    const cta = el("button", "primary feed-empty-cta", films.length ? "Оценить ещё фильм" : "Оценить первый фильм");
+    cta.type = "button";
+    cta.addEventListener("click", () => {
+      haptic("impact", "rigid");
+      showTab("rate");
+    });
+    empty.append(cta);
+    list.append(empty);
+    return;
+  }
+
+  const intro = el("div", "feed-intro");
+  intro.append(el("p", "", `На основе ${films.length} ${filmsWord(films.length)} в твоём дневнике`));
+  list.append(intro);
+  feedInsights(films).forEach((insight, index) => list.append(feedCard(insight, index)));
+}
+
 // ─── Дневник: статистика и записи ────────────────────────────────
 
 async function renderDiary() {
@@ -847,6 +1157,7 @@ function renderStats(films) {
 
 function filmItem(f) {
   const item = el("div", "film");
+  item.dataset.filmId = f.id;
   item.style.setProperty("--film-accent", genreColor(f.genre));
   const top = el("div", "film-top");
   const poster = f.poster
@@ -917,12 +1228,21 @@ $("btn-copy").addEventListener("click", async () => {
   setTimeout(() => { $("btn-copy").textContent = "Скопировать промпт"; }, 2000);
 });
 
-$("tab-rate").addEventListener("click", () => showTab("rate"));
-$("tab-diary").addEventListener("click", () => showTab("diary"));
+$("tab-rate").addEventListener("click", () => {
+  if (tab !== "rate") haptic("selection");
+  showTab("rate");
+});
+$("tab-feed").addEventListener("click", () => {
+  if (tab !== "feed") haptic("selection");
+  showTab("feed");
+});
+$("tab-diary").addEventListener("click", () => {
+  if (tab !== "diary") haptic("selection");
+  showTab("diary");
+});
 $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 
 showStep(0);
-showTab("rate");
-loadPopular();
+showTab("feed");
