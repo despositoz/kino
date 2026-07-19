@@ -161,6 +161,9 @@ let expandedId = null;
 let searchTimer = null;
 let searchController = null;
 let searchBlurTimer = null;
+let searchLayoutBottom = window.visualViewport
+  ? window.visualViewport.offsetTop + window.visualViewport.height
+  : window.innerHeight;
 let popularLoaded = false;
 
 const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
@@ -524,11 +527,18 @@ function syncSearchViewport() {
   const inputBottom = $("f-query").getBoundingClientRect().bottom;
   const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
   const available = Math.max(150, viewportBottom - inputBottom - 12);
+  const keyboardInset = Math.max(0, searchLayoutBottom - viewportBottom);
   document.documentElement.style.setProperty("--search-results-height", `${available}px`);
+  document.documentElement.style.setProperty("--keyboard-inset", `${keyboardInset}px`);
 }
 
 function setSearchMode(active) {
   clearTimeout(searchBlurTimer);
+  const wasActive = document.body.classList.contains("search-active");
+  if (active && !wasActive) {
+    const viewport = window.visualViewport;
+    searchLayoutBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+  }
   document.body.classList.toggle("search-active", active);
   $("film-search").classList.toggle("search-focused", active);
   if (active) {
@@ -538,6 +548,7 @@ function setSearchMode(active) {
     });
   } else {
     document.documentElement.style.removeProperty("--search-results-height");
+    document.documentElement.style.removeProperty("--keyboard-inset");
   }
 }
 
