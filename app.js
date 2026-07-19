@@ -41,6 +41,9 @@ const DEFAULT_ACCENT = "var(--accent)";
 const TMDB_KEY = "cf097ea6bdd4ac2b03c73baf862d389a";
 const TMDB_API = "https://api.themoviedb.org/3";
 const TMDB_IMG = "https://image.tmdb.org/t/p/";
+// Для доставки и аккуратной обрезки изображений нужен только cloud name.
+// API secret здесь намеренно не используется: фронтенд GitHub Pages публичный.
+const CLOUDINARY_FETCH = "https://res.cloudinary.com/eqqg0ktm/image/fetch/";
 const TMDB_GENRES = {
   27: "Хоррор", 53: "Триллер", 18: "Драма", 878: "Фантастика",
   28: "Боевик", 35: "Комедия", 9648: "Детектив", 14: "Фэнтези",
@@ -217,8 +220,29 @@ function microPreview(url, size) {
   return url ? url.replace(/\/(?:w\d+|h\d+|original)\//, `/${size}/`) : "";
 }
 
+function cloudinaryImage(source, transformations) {
+  return source ? `${CLOUDINARY_FETCH}${transformations}/${encodeURI(source)}` : "";
+}
+
+function cloudinarySource(url) {
+  if (!url || !url.startsWith(CLOUDINARY_FETCH)) return "";
+  const sourceAt = url.indexOf("/https://", CLOUDINARY_FETCH.length);
+  return sourceAt < 0 ? "" : decodeURI(url.slice(sourceAt + 1));
+}
+
+function tmdbPoster(path, width, height, quality = "auto:good") {
+  const source = path ? TMDB_IMG + "original" + path : "";
+  return cloudinaryImage(source,
+    `f_auto,q_${quality},c_fill,g_auto,w_${width},h_${height}`);
+}
+
+function tmdbBackdrop(path, width, quality = "auto:good") {
+  const source = path ? TMDB_IMG + "original" + path : "";
+  return cloudinaryImage(source, `f_auto,q_${quality},c_limit,w_${width}`);
+}
+
 function backdropPreview(backdrop, poster, savedPreview, posterMicroPreview) {
-  return posterMicroPreview || microPreview(poster, "w92") || savedPreview ||
+  return savedPreview || posterMicroPreview || microPreview(poster, "w92") ||
     microPreview(backdrop, "w300");
 }
 
@@ -237,6 +261,13 @@ function setBlurPicture(frame, previewImg, fullImg, preview, full) {
   if (!target) return;
 
   previewImg.src = preview || target;
+  previewImg.onerror = () => {
+    const fallback = cloudinarySource(preview || target);
+    if (fallback && previewImg.dataset.fallback !== fallback) {
+      previewImg.dataset.fallback = fallback;
+      previewImg.src = fallback;
+    }
+  };
   fullImg.onload = async () => {
     try { await fullImg.decode(); } catch (e) { /* изображение уже готово */ }
     if (frame.dataset.blurTarget !== target) return;
@@ -244,7 +275,14 @@ function setBlurPicture(frame, previewImg, fullImg, preview, full) {
       if (frame.dataset.blurTarget === target) frame.classList.add("is-loaded");
     });
   };
-  fullImg.onerror = () => { /* оставляем микро-превью вместо пустого блока */ };
+  fullImg.onerror = () => {
+    const fallback = cloudinarySource(target);
+    if (fallback && fullImg.dataset.fallback !== fallback) {
+      fullImg.dataset.fallback = fallback;
+      fullImg.src = fallback;
+    }
+    // Если не загрузится и оригинал, микро-превью останется вместо пустого блока.
+  };
   fullImg.src = target;
   if (fullImg.complete && fullImg.naturalWidth) fullImg.onload();
 }
@@ -416,9 +454,11 @@ function movieCard(movie, compact = false) {
   const button = el("button", compact ? "movie-card compact popular-card" : "movie-card search-result");
   button.type = "button";
   if (movie.poster_path) {
+    const posterWidth = compact ? 216 : 88;
+    const posterHeight = compact ? 308 : 124;
     button.append(blurPicture(
-      TMDB_IMG + "w92" + movie.poster_path,
-      TMDB_IMG + "w342" + movie.poster_path,
+      tmdbPoster(movie.poster_path, 20, compact ? 29 : 28, "auto:low"),
+      tmdbPoster(movie.poster_path, posterWidth, posterHeight),
       "poster-media",
       compact ? "eager" : "lazy",
     ));
@@ -517,11 +557,14 @@ function selectMovie(movie) {
   form.year = yearOf(movie);
   form.genre = genreOf(movie);
   form.tmdbId = movie.id;
-  form.poster = movie.poster_path ? TMDB_IMG + "w342" + movie.poster_path : "";
-  form.posterPreview = movie.poster_path ? TMDB_IMG + "w92" + movie.poster_path : "";
-  form.backdrop = movie.backdrop_path ? TMDB_IMG + "original" + movie.backdrop_path : form.poster;
-  form.backdropPreview = form.posterPreview ||
-    (movie.backdrop_path ? TMDB_IMG + "w300" + movie.backdrop_path : "");
+  form.poster = tmdbPoster(movie.poster_path, 420, 600);
+  form.posterPreview = tmdbPoster(movie.poster_path, 20, 30, "auto:low");
+  form.backdrop = movie.backdrop_path
+    ? tmdbBackdrop(movie.backdrop_path, 1280)
+    : form.poster;
+  form.backdropPreview = movie.backdrop_path
+    ? tmdbBackdrop(movie.backdrop_path, 48, "auto:low")
+    : form.posterPreview;
   syncGenreAccent(form.genre);
   haptic("impact", "rigid");
   showSelectedMovie(true);
