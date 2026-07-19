@@ -28,6 +28,16 @@ const CRITERIA = [
 const GENRES = ["Хоррор", "Триллер", "Драма", "Фантастика", "Боевик",
   "Комедия", "Детектив", "Фэнтези", "Анимация", "Документальный", "Другое"];
 
+// TMDB допускает клиентские read-only ключи в браузерных приложениях.
+const TMDB_KEY = "cf097ea6bdd4ac2b03c73baf862d389a";
+const TMDB_API = "https://api.themoviedb.org/3";
+const TMDB_IMG = "https://image.tmdb.org/t/p/";
+const TMDB_GENRES = {
+  27: "Хоррор", 53: "Триллер", 18: "Драма", 878: "Фантастика",
+  28: "Боевик", 35: "Комедия", 9648: "Детектив", 14: "Фэнтези",
+  16: "Анимация", 99: "Документальный",
+};
+
 const verdict = (s) => {
   if (s >= 9) return "Почти шедевр";
   if (s >= 8) return "Отлично";
@@ -103,6 +113,7 @@ const store = {
 
 const emptyForm = () => ({
   title: "", year: "", genre: GENRES[0],
+  tmdbId: null, poster: "", backdrop: "",
   scores: { plot: 5, chars: 5, visual: 5, sound: 5, emotion: 5 },
   personal: 5,
   liked: "", disliked: "", moment: "",
@@ -112,6 +123,8 @@ let form = emptyForm();
 let tab = "rate";   // "rate" | "diary"
 let step = 0;       // 0 фильм · 1 оценки · 2 итог · 3 запись
 let expandedId = null;
+let searchTimer = null;
+let searchController = null;
 
 const STEP_TITLES = ["Фильм", "Оценки", "Итог", "Запись"];
 
@@ -182,15 +195,18 @@ function haptic(kind) {
 
 // нарисовать звёзды с половинками: пять ★, у каждой золотая «заливка» 0/50/100%
 function renderStars(container, five) {
-  container.innerHTML = "";
+  if (container.children.length !== 5) {
+    container.innerHTML = "";
+    for (let i = 0; i < 5; i++) {
+      const star = el("div", "star", "★");
+      star.append(el("div", "fill", "★"));
+      container.append(star);
+    }
+  }
   for (let i = 0; i < 5; i++) {
-    const star = el("div", "star", "★");
     const v = five - i;
     const pct = v >= 1 ? 100 : v >= 0.5 ? 50 : 0;
-    const fill = el("div", "fill", "★");
-    fill.style.width = pct + "%";
-    star.append(fill);
-    container.append(star);
+    container.children[i].querySelector(".fill").style.width = pct + "%";
   }
 }
 
@@ -205,8 +221,14 @@ function showTab(name) {
   $("footer-action").classList.toggle("hidden", name !== "rate");
   $("tab-rate").classList.toggle("on", name === "rate");
   $("tab-diary").classList.toggle("on", name === "diary");
-  document.body.classList.toggle("hero", name === "rate" && step === 0 && !!form.title);
+  syncAtmosphere();
   if (name === "diary") renderDiary();
+}
+
+function syncAtmosphere() {
+  const insideFilm = tab === "rate" && !!form.title;
+  document.body.classList.toggle("immersive", insideFilm);
+  document.body.classList.toggle("hero", insideFilm && step === 0);
 }
 
 function showStep(n) {
@@ -217,7 +239,7 @@ function showStep(n) {
   const segs = $("progress").children;
   for (let i = 0; i < segs.length; i++) segs[i].classList.toggle("on", i <= n);
   $("btn-back").classList.toggle("hidden", n === 0);
-  document.body.classList.toggle("hero", n === 0 && !!form.title);
+  syncAtmosphere();
 
   const primary = $("btn-primary");
   primary.textContent =
@@ -225,7 +247,13 @@ function showStep(n) {
   primary.classList.toggle("muted", n === 0 && !form.title);
   $("btn-save-empty").classList.toggle("hidden", n !== 3);
 
-  if (n === 1) updateStars("1");
+  if (n === 1) {
+    $("rating-title").textContent = form.title;
+    $("rating-meta").textContent = [form.year, form.genre].filter(Boolean).join(" · ");
+    $("rating-poster").src = form.poster || "";
+    $("rating-poster").classList.toggle("hidden", !form.poster);
+    updateStars("1");
+  }
   if (n === 2) updateStars("2");
   if (n === 3) $("e-prompt").value = manualPrompt();
   window.scrollTo(0, 0);
@@ -235,28 +263,192 @@ function showStep(n) {
 
 function onQueryInput() {
   const q = $("f-query").value.trim();
-  $("add-box").classList.toggle("hidden", q.length < 2);
-  $("add-name").textContent = q;
   $("query-err").classList.add("hidden");
   $("f-query").classList.remove("bad");
+  clearTimeout(searchTimer);
+  if (searchController) searchController.abort();
+  if (q.length < 2) {
+    resetSearchView();
+    return;
+  }
+  $("popular").classList.add("hidden");
+  $("results").classList.remove("hidden");
+  $("results").setAttribute("aria-busy", "true");
+  $("results").innerHTML = '<div class="catalog-state">Ищу фильмы…</div>';
+  searchTimer = setTimeout(() => searchMovies(q), 350);
 }
 
-function addFilm() {
-  const q = $("f-query").value.trim();
-  if (q.length < 2) return;
-  form.title = q;
+function resetSearchView() {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  if (searchController) searchController.abort();
+  searchController = null;
+  $("results").innerHTML = "";
+  $("results").classList.add("hidden");
+  $("results").setAttribute("aria-busy", "false");
+  $("popular").classList.remove("hidden");
+}
+
+async function tmdb(path, signal) {
+  const join = path.includes("?") ? "&" : "?";
+  const response = await fetch(`${TMDB_API}${path}${join}api_key=${TMDB_KEY}&language=ru-RU`, { signal });
+  if (!response.ok) throw new Error(`TMDB: ${response.status}`);
+  return response.json();
+}
+
+function yearOf(movie) {
+  return (movie.release_date || "").slice(0, 4);
+}
+
+function genreOf(movie) {
+  const id = (movie.genre_ids || []).find((genreId) => TMDB_GENRES[genreId]);
+  return TMDB_GENRES[id] || "Другое";
+}
+
+function movieCard(movie, compact = false) {
+  const button = el("button", compact ? "movie-card compact popular-card" : "movie-card search-result");
+  button.type = "button";
+  if (movie.poster_path) {
+    const img = new Image();
+    img.src = TMDB_IMG + "w342" + movie.poster_path;
+    img.alt = "";
+    img.loading = compact ? "eager" : "lazy";
+    img.decoding = "async";
+    button.append(img);
+  } else {
+    button.append(el("div", "movie-placeholder", "🎬"));
+  }
+  const info = el("span", "movie-card-info");
+  info.append(el("strong", "", movie.title));
+  info.append(el("small", "", [yearOf(movie), genreOf(movie)].filter(Boolean).join(" · ")));
+  button.append(info);
+  button.addEventListener("click", () => selectMovie(movie));
+  return button;
+}
+
+function renderMovies(container, movies, popular = false) {
+  container.innerHTML = "";
+  movies.slice(0, popular ? 8 : 6).forEach((movie) => container.append(movieCard(movie, popular)));
+}
+
+function normalizeTitle(text) {
+  return text.toLowerCase().replace(/ё/g, "е").replace(/[^a-zа-я0-9]/g, "");
+}
+
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]; row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const old = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = old;
+    }
+  }
+  return row[b.length];
+}
+
+// Если TMDB не понял опечатку, ищем по отдельным словам и их устойчивым префиксам.
+async function typoSearch(query, signal) {
+  const words = query.split(/\s+/).filter((word) => word.length >= 3);
+  const terms = [...new Set(words.flatMap((word) => [word, word.slice(0, Math.max(3, word.length - 3))]))].slice(0, 4);
+  const pages = await Promise.all(terms.map((term) =>
+    tmdb(`/search/movie?query=${encodeURIComponent(term)}&include_adult=false`, signal)));
+  const unique = new Map();
+  pages.flatMap((page) => page.results || []).forEach((movie) => unique.set(movie.id, movie));
+  const wanted = normalizeTitle(query);
+  return [...unique.values()].sort((a, b) =>
+    editDistance(wanted, normalizeTitle(a.title)) - editDistance(wanted, normalizeTitle(b.title)));
+}
+
+async function searchMovies(query) {
+  const controller = new AbortController();
+  searchController = controller;
+  try {
+    const data = await tmdb(`/search/movie?query=${encodeURIComponent(query)}&include_adult=false`, controller.signal);
+    if ($("f-query").value.trim() !== query) return;
+    let movies = data.results || [];
+    let corrected = false;
+    if (!movies.length) {
+      movies = await typoSearch(query, controller.signal);
+      corrected = movies.length > 0;
+    }
+    if ($("f-query").value.trim() !== query) return;
+    renderMovies($("results"), movies);
+    if (corrected) $("results").prepend(el("div", "catalog-hint", "Похоже, в названии опечатка — вот ближайшие фильмы"));
+    if (!movies.length) $("results").append(el("div", "catalog-state", "Ничего не найдено"));
+    const manual = el("button", "manual-add", `Добавить «${query}» вручную`);
+    manual.type = "button";
+    manual.addEventListener("click", () => selectManual(query));
+    $("results").append(manual);
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    $("results").innerHTML = "";
+    $("results").append(el("div", "catalog-state", "TMDB недоступен — можно добавить вручную"));
+    const manual = el("button", "manual-add", `Добавить «${query}» вручную`);
+    manual.type = "button";
+    manual.addEventListener("click", () => selectManual(query));
+    $("results").append(manual);
+  } finally {
+    if (searchController === controller) searchController = null;
+    if ($("f-query").value.trim() === query) $("results").setAttribute("aria-busy", "false");
+  }
+}
+
+async function loadPopular() {
+  try {
+    const data = await tmdb("/movie/popular?page=1");
+    renderMovies($("popular-list"), data.results || [], true);
+    $("popular").classList.toggle("hidden", !!$("f-query").value.trim());
+  } catch (e) {
+    $("popular").classList.add("hidden");
+  }
+}
+
+function selectMovie(movie) {
+  form.title = movie.title;
+  form.year = yearOf(movie);
+  form.genre = genreOf(movie);
+  form.tmdbId = movie.id;
+  form.poster = movie.poster_path ? TMDB_IMG + "w342" + movie.poster_path : "";
+  form.backdrop = movie.backdrop_path ? TMDB_IMG + "original" + movie.backdrop_path : form.poster;
+  showSelectedMovie(true);
+}
+
+function selectManual(title) {
+  form.title = title;
+  form.year = "";
+  form.genre = GENRES[0];
+  form.tmdbId = null;
+  form.poster = "";
+  form.backdrop = "";
+  showSelectedMovie(false);
+}
+
+function showSelectedMovie(fromCatalog) {
   $("f-query").value = "";
-  $("add-box").classList.add("hidden");
+  resetSearchView();
   $("hero-title").textContent = form.title;
+  $("f-year").value = form.year;
+  $("f-genre").value = form.genre;
+  $("chip-year").textContent = form.year || "Год не указан";
+  $("chip-genre").textContent = form.genre;
+  $("hero-chips").classList.toggle("hidden", !fromCatalog);
+  document.querySelector(".hero-fields").classList.toggle("hidden", fromCatalog);
+  document.body.style.setProperty("--hero-image", form.backdrop ? `url("${form.backdrop}")` : "none");
   $("film-search").classList.add("hidden");
   $("film-hero").classList.remove("hidden");
   showStep(0); // обновить герой-фон и кнопку
 }
 
 function clearFilm() {
-  form.title = "";
+  form.title = ""; form.year = ""; form.tmdbId = null; form.poster = ""; form.backdrop = "";
+  document.body.style.setProperty("--hero-image", "none");
   $("film-search").classList.remove("hidden");
   $("film-hero").classList.add("hidden");
+  $("hero-chips").classList.add("hidden");
+  document.querySelector(".hero-fields").classList.remove("hidden");
+  resetSearchView();
   showStep(0);
 }
 
@@ -270,7 +462,7 @@ function paintSlider(range, color) {
 
 function buildSliders() {
   const box = $("sliders");
-  const accent = "#6b5bd2", gold = "#97730a";
+  const accent = "#70675f", gold = "#97730a";
 
   const make = (name, value, personal, oninput) => {
     const wrap = el("div", "crit" + (personal ? " personal" : ""));
@@ -322,8 +514,10 @@ function primaryAction() {
       $("f-query").classList.add("bad");
       return;
     }
-    form.year = $("f-year").value.trim();
-    form.genre = $("f-genre").value;
+    if (!form.tmdbId) {
+      form.year = $("f-year").value.trim();
+      form.genre = $("f-genre").value;
+    }
     showStep(1);
   } else if (step === 1) {
     showStep(2);
@@ -348,6 +542,7 @@ async function saveEntry(review) {
   const film = {
     id: Date.now(),
     title: form.title, year: form.year, genre: form.genre,
+    tmdbId: form.tmdbId, poster: form.poster, backdrop: form.backdrop,
     scores: { ...form.scores },
     quality: calcQuality(form.scores),
     personal: form.personal,
@@ -374,6 +569,7 @@ async function saveEntry(review) {
   buildSliders();
   $("film-search").classList.remove("hidden");
   $("film-hero").classList.add("hidden");
+  document.body.style.setProperty("--hero-image", "none");
   showStep(0);
   showTab("diary");
 }
@@ -392,12 +588,29 @@ async function renderDiary() {
   }
   if (!films.length) {
     $("stats").classList.add("hidden");
+    $("diary-feature").classList.add("hidden");
     list.append(el("div", "empty", "Дневник пока пуст. Оцени первый фильм на вкладке «Оценить»."));
     return;
   }
   $("stats").classList.remove("hidden");
+  renderDiaryFeature(films[0]);
   renderStats(films);
   films.forEach((f) => list.append(filmItem(f)));
+}
+
+function renderDiaryFeature(film) {
+  const box = $("diary-feature");
+  box.innerHTML = "";
+  box.style.backgroundImage = film.backdrop
+    ? `linear-gradient(90deg, rgba(20,18,17,.92), rgba(20,18,17,.3)), url("${film.backdrop}")`
+    : "linear-gradient(135deg, #302b28, #6f6258)";
+  const copy = el("div", "diary-feature-copy");
+  copy.append(el("span", "", "Последняя запись"));
+  copy.append(el("h2", "", film.title));
+  copy.append(el("div", "diary-feature-stars", starsText(film.quality)));
+  copy.append(el("p", "", `${toFive(film.quality).toFixed(1)} из 5 · ${film.genre}`));
+  box.append(copy);
+  box.classList.remove("hidden");
 }
 
 function renderStats(films) {
@@ -445,7 +658,9 @@ function renderStats(films) {
 function filmItem(f) {
   const item = el("div", "film");
   const top = el("div", "film-top");
-  top.append(el("div", "poster"));
+  const poster = el("div", "poster");
+  if (f.poster) poster.style.backgroundImage = `url("${f.poster}")`;
+  top.append(poster);
   const info = el("div", "film-info");
   info.append(el("div", "film-title", f.title + (f.year ? ` (${f.year})` : "")));
   info.append(el("div", "film-meta", `${f.genre} · ${f.date}`));
@@ -493,8 +708,9 @@ GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
 buildSliders();
 
 $("f-query").addEventListener("input", onQueryInput);
-$("f-query").addEventListener("keydown", (e) => { if (e.key === "Enter") addFilm(); });
-$("btn-add").addEventListener("click", addFilm);
+$("f-query").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && $("f-query").value.trim().length >= 2) selectManual($("f-query").value.trim());
+});
 $("btn-clear").addEventListener("click", clearFilm);
 $("btn-back").addEventListener("click", () => showStep(step - 1));
 $("btn-primary").addEventListener("click", primaryAction);
@@ -513,3 +729,4 @@ if (!inTelegram) $("storage-note").classList.remove("hidden");
 
 showStep(0);
 showTab("rate");
+loadPopular();

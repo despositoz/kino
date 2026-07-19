@@ -36,10 +36,12 @@
     <div id="film-search">
       <h2 class="ask">Какой фильм хочешь оценить?</h2>
       <p class="ask-sub">Напиши название и добавь его в дневник</p>
-      <input id="f-query" placeholder="Начни вводить название" autocomplete="off">
-      <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и нажми «Добавить».</div>
-      <div id="add-box" class="add-box hidden">
-        <button id="btn-add" class="add-row">Добавить «<span id="add-name"></span>»</button>
+      <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off">
+      <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм или нажми «Добавить».</div>
+      <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
+      <div id="popular" class="hidden">
+        <div class="sec-label pop-label">Популярное сейчас</div>
+        <div id="popular-list"></div>
       </div>
     </div>
 
@@ -49,6 +51,12 @@
       <div class="hero-bottom">
         <div class="hero-label">Ты оцениваешь</div>
         <div id="hero-title" class="hero-title"></div>
+        <!-- фильм из каталога: год и жанр чипсами -->
+        <div id="hero-chips" class="hero-chips hidden">
+          <span id="chip-year" class="chip"></span>
+          <span id="chip-genre" class="chip"></span>
+        </div>
+        <!-- фильм, добавленный вручную: год и жанр вводятся -->
         <div class="hero-fields">
           <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
           <select id="f-genre"></select>
@@ -59,6 +67,14 @@
 
   <!-- Шаг 2: оценки -->
   <section id="step-1" class="hidden">
+    <div class="rating-film">
+      <img id="rating-poster" alt="">
+      <div>
+        <span>Сейчас оцениваешь</span>
+        <h2 id="rating-title"></h2>
+        <p id="rating-meta"></p>
+      </div>
+    </div>
     <div class="stars-sticky">
       <div class="stars-card">
         <div id="stars-1" class="stars-row"></div>
@@ -76,16 +92,16 @@
       <div id="stars-2-num" class="stars-num"></div>
       <div id="stars-2-tag" class="stars-tag"></div>
     </div>
-    <div class="note-block">
-      <div class="sec-label">Что понравилось</div>
+    <div class="note-block feeling-card liked-card">
+      <div class="feeling-head"><span>♥</span><div class="sec-label">Что понравилось</div></div>
       <textarea id="f-liked" placeholder="Что понравилось" rows="2"></textarea>
     </div>
-    <div class="note-block">
-      <div class="sec-label">Что не понравилось</div>
+    <div class="note-block feeling-card disliked-card">
+      <div class="feeling-head"><span>☹</span><div class="sec-label">Что не понравилось</div></div>
       <textarea id="f-disliked" placeholder="Что не понравилось" rows="2"></textarea>
     </div>
-    <div class="note-block">
-      <div class="sec-label">Запомнившийся момент</div>
+    <div class="note-block feeling-card scene-card">
+      <div class="feeling-head"><span>▶</span><div class="sec-label">Любимая сцена</div></div>
       <textarea id="f-moment" placeholder="Запомнившийся момент или сцена" rows="2"></textarea>
     </div>
   </section>
@@ -112,23 +128,38 @@
     Открыто вне Telegram — записи сохраняются только в этом браузере.
   </p>
 
+  <div id="diary-feature" class="diary-feature hidden"></div>
+
   <div id="stats" class="hidden">
+    <div class="diary-heading"><span>Твоя история</span><h2>Кино в цифрах</h2></div>
     <div class="tiles">
       <div class="tile"><div id="st-total" class="tile-num">0</div><div class="tile-sub">фильмов</div></div>
       <div class="tile"><div id="st-avg" class="tile-num gold">—</div><div class="tile-sub">средняя оценка</div></div>
       <div class="tile"><div id="st-genre" class="tile-num teal small">—</div><div class="tile-sub">любимый жанр</div></div>
     </div>
 
-    <div class="sec-label">Распределение оценок</div>
-    <div id="dist" class="dist"></div>
+    <div class="diary-card">
+      <div class="sec-label">Распределение оценок</div>
+      <div id="dist" class="dist"></div>
+    </div>
 
-    <div class="sec-label">Топ жанров</div>
-    <div id="genre-bars" class="genre-bars"></div>
+    <div class="diary-card">
+      <div class="sec-label">Любимые жанры</div>
+      <div id="genre-bars" class="genre-bars"></div>
+    </div>
 
-    <div class="sec-label">Записи</div>
+    <div class="diary-heading history-heading"><span>По порядку</span><h2>История просмотров</h2></div>
   </div>
 
   <div id="diary-list"></div>
+
+  <details class="credits">
+    <summary>О приложении</summary>
+    <a href="https://www.themoviedb.org" target="_blank" rel="noopener">
+      <img src="tmdb.svg" alt="TMDB">
+    </a>
+    <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+  </details>
 </main>
 
 <!-- ─── Низ: главная кнопка шага + вкладки ─── -->
