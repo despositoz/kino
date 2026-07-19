@@ -28,6 +28,15 @@ const CRITERIA = [
 const GENRES = ["Хоррор", "Триллер", "Драма", "Фантастика", "Боевик",
   "Комедия", "Детектив", "Фэнтези", "Анимация", "Документальный", "Другое"];
 
+const GENRE_COLORS = {
+  "Хоррор": "#B84C4C",
+  "Триллер": "#B84C4C",
+  "Драма": "#5C7C9C",
+  "Комедия": "#E8B54F",
+  "Фантастика": "#4FBFA8",
+};
+const DEFAULT_ACCENT = "var(--accent)";
+
 // TMDB допускает клиентские read-only ключи в браузерных приложениях.
 const TMDB_KEY = "cf097ea6bdd4ac2b03c73baf862d389a";
 const TMDB_API = "https://api.themoviedb.org/3";
@@ -113,7 +122,7 @@ const store = {
 
 const emptyForm = () => ({
   title: "", year: "", genre: GENRES[0],
-  tmdbId: null, poster: "", backdrop: "",
+  tmdbId: null, poster: "", posterPreview: "", backdrop: "", backdropPreview: "",
   scores: { plot: 5, chars: 5, visual: 5, sound: 5, emotion: 5 },
   personal: 5,
   liked: "", disliked: "", moment: "",
@@ -126,7 +135,7 @@ let expandedId = null;
 let searchTimer = null;
 let searchController = null;
 
-const STEP_TITLES = ["Фильм", "Оценки", "Итог", "Запись"];
+const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
 
@@ -187,10 +196,101 @@ function confirmAsk(msg) {
   });
 }
 
-function haptic(kind) {
-  if (inTelegram && tg.HapticFeedback) {
-    try { tg.HapticFeedback.notificationOccurred(kind); } catch (e) { /* не критично */ }
+function haptic(type, style) {
+  if (!inTelegram || !tg.HapticFeedback) return;
+  try {
+    if (type === "selection") tg.HapticFeedback.selectionChanged();
+    else if (type === "impact") tg.HapticFeedback.impactOccurred(style);
+    else tg.HapticFeedback.notificationOccurred(style);
+  } catch (e) { /* не критично */ }
+}
+
+function genreColor(genre) {
+  return GENRE_COLORS[genre] || DEFAULT_ACCENT;
+}
+
+function syncGenreAccent(genre) {
+  document.documentElement.style.setProperty("--genre-accent", genre ? genreColor(genre) : DEFAULT_ACCENT);
+}
+
+function microPreview(url, size) {
+  return url ? url.replace(/\/(?:w\d+|h\d+|original)\//, `/${size}/`) : "";
+}
+
+function backdropPreview(backdrop, poster, savedPreview, posterMicroPreview) {
+  return posterMicroPreview || microPreview(poster, "w92") || savedPreview ||
+    microPreview(backdrop, "w300");
+}
+
+function cssImage(url) {
+  return url ? `url("${url.replace(/["\\]/g, "\\$&")}")` : "none";
+}
+
+// Два слоя дают настоящий blur-up: маленькое превью остаётся под
+// полноразмерной картинкой, пока та не загрузилась и не декодировалась.
+function setBlurPicture(frame, previewImg, fullImg, preview, full) {
+  const target = full || preview;
+  frame.classList.remove("is-loaded");
+  frame.dataset.blurTarget = target || "";
+  previewImg.removeAttribute("src");
+  fullImg.removeAttribute("src");
+  if (!target) return;
+
+  previewImg.src = preview || target;
+  fullImg.onload = async () => {
+    try { await fullImg.decode(); } catch (e) { /* изображение уже готово */ }
+    if (frame.dataset.blurTarget !== target) return;
+    requestAnimationFrame(() => {
+      if (frame.dataset.blurTarget === target) frame.classList.add("is-loaded");
+    });
+  };
+  fullImg.onerror = () => { /* оставляем микро-превью вместо пустого блока */ };
+  fullImg.src = target;
+  if (fullImg.complete && fullImg.naturalWidth) fullImg.onload();
+}
+
+function blurPicture(preview, full, className, loading = "lazy") {
+  const frame = el("span", `blur-up-media ${className}`);
+  const low = new Image();
+  const high = new Image();
+  low.className = "blur-up-preview";
+  high.className = "blur-up-full";
+  low.alt = "";
+  high.alt = "";
+  low.setAttribute("aria-hidden", "true");
+  high.setAttribute("aria-hidden", "true");
+  low.decoding = "async";
+  high.decoding = "async";
+  low.loading = "eager";
+  high.loading = loading;
+  frame.append(low, high);
+  setBlurPicture(frame, low, high, preview, full);
+  return frame;
+}
+
+function setBlurBackground(node, preview, full, previewProperty, fullProperty, loadedClass) {
+  const target = full || preview;
+  node.classList.remove(loadedClass);
+  node.dataset.blurTarget = target || "";
+  node.style.setProperty(previewProperty, cssImage(preview || target));
+  node.style.setProperty(fullProperty, cssImage(target));
+  if (!target) {
+    node.classList.add(loadedClass);
+    return;
   }
+
+  const image = new Image();
+  image.decoding = "async";
+  image.onload = async () => {
+    try { await image.decode(); } catch (e) { /* изображение уже готово */ }
+    if (node.dataset.blurTarget !== target) return;
+    requestAnimationFrame(() => {
+      if (node.dataset.blurTarget === target) node.classList.add(loadedClass);
+    });
+  };
+  image.onerror = () => { /* превью остаётся видимым */ };
+  image.src = target;
+  if (image.complete && image.naturalWidth) image.onload();
 }
 
 // нарисовать звёзды с половинками: пять ★, у каждой золотая «заливка» 0/50/100%
@@ -243,15 +343,22 @@ function showStep(n) {
 
   const primary = $("btn-primary");
   primary.textContent =
-    n === 0 ? "Далее" : n === 1 ? "Далее: итог" : n === 2 ? "Далее: запись" : "Сохранить запись";
+    n <= 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
   primary.classList.toggle("muted", n === 0 && !form.title);
   $("btn-save-empty").classList.toggle("hidden", n !== 3);
 
   if (n === 1) {
     $("rating-title").textContent = form.title;
     $("rating-meta").textContent = [form.year, form.genre].filter(Boolean).join(" · ");
-    $("rating-poster").src = form.poster || "";
-    $("rating-poster").classList.toggle("hidden", !form.poster);
+    const posterWrap = $("rating-poster-wrap");
+    posterWrap.classList.toggle("hidden", !form.poster);
+    if (form.poster) setBlurPicture(
+      posterWrap,
+      $("rating-poster-preview"),
+      $("rating-poster"),
+      form.posterPreview || microPreview(form.poster, "w92"),
+      form.poster,
+    );
     updateStars("1");
   }
   if (n === 2) updateStars("2");
@@ -309,12 +416,12 @@ function movieCard(movie, compact = false) {
   const button = el("button", compact ? "movie-card compact popular-card" : "movie-card search-result");
   button.type = "button";
   if (movie.poster_path) {
-    const img = new Image();
-    img.src = TMDB_IMG + "w342" + movie.poster_path;
-    img.alt = "";
-    img.loading = compact ? "eager" : "lazy";
-    img.decoding = "async";
-    button.append(img);
+    button.append(blurPicture(
+      TMDB_IMG + "w92" + movie.poster_path,
+      TMDB_IMG + "w342" + movie.poster_path,
+      "poster-media",
+      compact ? "eager" : "lazy",
+    ));
   } else {
     button.append(el("div", "movie-placeholder", "🎬"));
   }
@@ -411,7 +518,12 @@ function selectMovie(movie) {
   form.genre = genreOf(movie);
   form.tmdbId = movie.id;
   form.poster = movie.poster_path ? TMDB_IMG + "w342" + movie.poster_path : "";
+  form.posterPreview = movie.poster_path ? TMDB_IMG + "w92" + movie.poster_path : "";
   form.backdrop = movie.backdrop_path ? TMDB_IMG + "original" + movie.backdrop_path : form.poster;
+  form.backdropPreview = form.posterPreview ||
+    (movie.backdrop_path ? TMDB_IMG + "w300" + movie.backdrop_path : "");
+  syncGenreAccent(form.genre);
+  haptic("impact", "rigid");
   showSelectedMovie(true);
 }
 
@@ -421,7 +533,11 @@ function selectManual(title) {
   form.genre = GENRES[0];
   form.tmdbId = null;
   form.poster = "";
+  form.posterPreview = "";
   form.backdrop = "";
+  form.backdropPreview = "";
+  syncGenreAccent(form.genre);
+  haptic("impact", "rigid");
   showSelectedMovie(false);
 }
 
@@ -435,15 +551,26 @@ function showSelectedMovie(fromCatalog) {
   $("chip-genre").textContent = form.genre;
   $("hero-chips").classList.toggle("hidden", !fromCatalog);
   document.querySelector(".hero-fields").classList.toggle("hidden", fromCatalog);
-  document.body.style.setProperty("--hero-image", form.backdrop ? `url("${form.backdrop}")` : "none");
+  setBlurBackground(
+    document.body,
+    backdropPreview(form.backdrop, form.poster, form.backdropPreview, form.posterPreview),
+    form.backdrop,
+    "--hero-preview",
+    "--hero-image",
+    "hero-image-loaded",
+  );
   $("film-search").classList.add("hidden");
   $("film-hero").classList.remove("hidden");
   showStep(0); // обновить герой-фон и кнопку
 }
 
 function clearFilm() {
-  form.title = ""; form.year = ""; form.tmdbId = null; form.poster = ""; form.backdrop = "";
+  form.title = ""; form.year = ""; form.tmdbId = null;
+  form.poster = ""; form.posterPreview = ""; form.backdrop = ""; form.backdropPreview = "";
+  document.body.classList.remove("hero-image-loaded");
+  document.body.style.setProperty("--hero-preview", "none");
   document.body.style.setProperty("--hero-image", "none");
+  syncGenreAccent(null);
   $("film-search").classList.remove("hidden");
   $("film-hero").classList.add("hidden");
   $("hero-chips").classList.add("hidden");
@@ -455,14 +582,17 @@ function clearFilm() {
 // ─── Шаг 2: слайдеры ─────────────────────────────────────────────
 
 function paintSlider(range, color) {
-  const pct = (+range.value) * 10;
-  range.style.background =
-    `linear-gradient(90deg, ${color} 0%, ${color} ${pct}%, var(--line2) ${pct}%, var(--line2) 100%)`;
+  const min = Number(range.min);
+  const max = Number(range.max);
+  const value = Number(range.value);
+  const pct = max === min ? 0 : ((value - min) / (max - min)) * 100;
+  range.style.setProperty("--slider-color", color);
+  range.style.setProperty("--slider-fill", `${Math.max(0, Math.min(100, pct))}%`);
 }
 
 function buildSliders() {
   const box = $("sliders");
-  const accent = "#70675f", gold = "#97730a";
+  const accent = "var(--genre-accent)", gold = "var(--gold)";
 
   const make = (name, value, personal, oninput) => {
     const wrap = el("div", "crit" + (personal ? " personal" : ""));
@@ -484,6 +614,7 @@ function buildSliders() {
       oninput(+range.value);
       updateStars("1");
     });
+    range.addEventListener("change", () => haptic("selection"));
     wrap.append(top, range);
     box.append(wrap);
   };
@@ -517,14 +648,18 @@ function primaryAction() {
     if (!form.tmdbId) {
       form.year = $("f-year").value.trim();
       form.genre = $("f-genre").value;
+      syncGenreAccent(form.genre);
     }
+    haptic("impact", "soft");
     showStep(1);
   } else if (step === 1) {
+    haptic("impact", "soft");
     showStep(2);
   } else if (step === 2) {
     form.liked = $("f-liked").value.trim();
     form.disliked = $("f-disliked").value.trim();
     form.moment = $("f-moment").value.trim();
+    haptic("impact", "soft");
     showStep(3);
   } else {
     const review = $("e-review").value.trim();
@@ -542,7 +677,9 @@ async function saveEntry(review) {
   const film = {
     id: Date.now(),
     title: form.title, year: form.year, genre: form.genre,
-    tmdbId: form.tmdbId, poster: form.poster, backdrop: form.backdrop,
+    tmdbId: form.tmdbId,
+    poster: form.poster, posterPreview: form.posterPreview,
+    backdrop: form.backdrop, backdropPreview: form.backdropPreview,
     scores: { ...form.scores },
     quality: calcQuality(form.scores),
     personal: form.personal,
@@ -558,7 +695,7 @@ async function saveEntry(review) {
     return;
   }
   $("entry-err").classList.add("hidden");
-  haptic("success");
+  haptic("notification", "success");
 
   // сброс формы и переход в дневник
   form = emptyForm();
@@ -569,7 +706,10 @@ async function saveEntry(review) {
   buildSliders();
   $("film-search").classList.remove("hidden");
   $("film-hero").classList.add("hidden");
+  document.body.classList.remove("hero-image-loaded");
+  document.body.style.setProperty("--hero-preview", "none");
   document.body.style.setProperty("--hero-image", "none");
+  syncGenreAccent(null);
   showStep(0);
   showTab("diary");
 }
@@ -601,11 +741,17 @@ async function renderDiary() {
 function renderDiaryFeature(film) {
   const box = $("diary-feature");
   box.innerHTML = "";
-  box.style.backgroundImage = film.backdrop
-    ? `linear-gradient(90deg, rgba(20,18,17,.92), rgba(20,18,17,.3)), url("${film.backdrop}")`
-    : "linear-gradient(135deg, #302b28, #6f6258)";
+  box.style.setProperty("--film-accent", genreColor(film.genre));
+  setBlurBackground(
+    box,
+    backdropPreview(film.backdrop, film.poster, film.backdropPreview, film.posterPreview),
+    film.backdrop,
+    "--feature-preview",
+    "--feature-image",
+    "is-image-loaded",
+  );
   const copy = el("div", "diary-feature-copy");
-  copy.append(el("span", "", "Последняя запись"));
+  copy.append(el("span", "", "Последнее"));
   copy.append(el("h2", "", film.title));
   copy.append(el("div", "diary-feature-stars", starsText(film.quality)));
   copy.append(el("p", "", `${toFive(film.quality).toFixed(1)} из 5 · ${film.genre}`));
@@ -649,6 +795,7 @@ function renderStats(films) {
     const track = el("div", "gb-track");
     const fill = el("div", "gb-fill");
     fill.style.width = (count / maxGenre) * 100 + "%";
+    fill.style.backgroundColor = genreColor(name);
     track.append(fill);
     row.append(top, track);
     gb.append(row);
@@ -657,9 +804,11 @@ function renderStats(films) {
 
 function filmItem(f) {
   const item = el("div", "film");
+  item.style.setProperty("--film-accent", genreColor(f.genre));
   const top = el("div", "film-top");
-  const poster = el("div", "poster");
-  if (f.poster) poster.style.backgroundImage = `url("${f.poster}")`;
+  const poster = f.poster
+    ? blurPicture(f.posterPreview || microPreview(f.poster, "w92"), f.poster, "poster")
+    : el("div", "poster", "🎬");
   top.append(poster);
   const info = el("div", "film-info");
   info.append(el("div", "film-title", f.title + (f.year ? ` (${f.year})` : "")));
@@ -712,7 +861,10 @@ $("f-query").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && $("f-query").value.trim().length >= 2) selectManual($("f-query").value.trim());
 });
 $("btn-clear").addEventListener("click", clearFilm);
-$("btn-back").addEventListener("click", () => showStep(step - 1));
+$("btn-back").addEventListener("click", () => {
+  haptic("impact", "soft");
+  showStep(step - 1);
+});
 $("btn-primary").addEventListener("click", primaryAction);
 $("btn-save-empty").addEventListener("click", () => saveEntry(""));
 
@@ -724,6 +876,7 @@ $("btn-copy").addEventListener("click", async () => {
 
 $("tab-rate").addEventListener("click", () => showTab("rate"));
 $("tab-diary").addEventListener("click", () => showTab("diary"));
+$("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 

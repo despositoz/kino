@@ -6,7 +6,7 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=opinion4">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
   </div>
   <div id="head-diary" class="hidden">
     <div class="head-title">Дневник</div>
-    <div class="head-sub">статистика и все записи</div>
+    <div class="head-sub">твоя история кино</div>
   </div>
 </header>
 
@@ -34,8 +34,8 @@
   <!-- Шаг 1: какой фильм -->
   <section id="step-0">
     <div id="film-search">
-      <h2 class="ask">Какой фильм хочешь оценить?</h2>
-      <p class="ask-sub">Напиши название и добавь его в дневник</p>
+      <h2 class="ask">Что смотрел?</h2>
+      <p class="ask-sub">Найди или добавь сам</p>
       <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off">
       <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм или нажми «Добавить».</div>
       <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
@@ -68,9 +68,12 @@
   <!-- Шаг 2: оценки -->
   <section id="step-1" class="hidden">
     <div class="rating-film">
-      <img id="rating-poster" alt="">
+      <span id="rating-poster-wrap" class="rating-poster-media blur-up-media hidden">
+        <img id="rating-poster-preview" class="blur-up-preview" alt="" aria-hidden="true">
+        <img id="rating-poster" class="blur-up-full" alt="" aria-hidden="true">
+      </span>
       <div>
-        <span>Сейчас оцениваешь</span>
+        <span>Оцениваешь</span>
         <h2 id="rating-title"></h2>
         <p id="rating-meta"></p>
       </div>
@@ -93,16 +96,16 @@
       <div id="stars-2-tag" class="stars-tag"></div>
     </div>
     <div class="note-block feeling-card liked-card">
-      <div class="feeling-head"><span>♥</span><div class="sec-label">Что понравилось</div></div>
-      <textarea id="f-liked" placeholder="Что понравилось" rows="2"></textarea>
+      <div class="feeling-head"><span>♥</span><div class="sec-label">Что зацепило?</div></div>
+      <textarea id="f-liked" placeholder="Что зацепило в фильме?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card disliked-card">
-      <div class="feeling-head"><span>☹</span><div class="sec-label">Что не понравилось</div></div>
-      <textarea id="f-disliked" placeholder="Что не понравилось" rows="2"></textarea>
+      <div class="feeling-head"><span>☹</span><div class="sec-label">Что подвело?</div></div>
+      <textarea id="f-disliked" placeholder="Что не сработало?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card scene-card">
-      <div class="feeling-head"><span>▶</span><div class="sec-label">Любимая сцена</div></div>
-      <textarea id="f-moment" placeholder="Запомнившийся момент или сцена" rows="2"></textarea>
+      <div class="feeling-head"><span>▶</span><div class="sec-label">Какая сцена засела в голове?</div></div>
+      <textarea id="f-moment" placeholder="Опиши момент, который запомнился" rows="2"></textarea>
     </div>
   </section>
 
@@ -178,6 +181,6 @@
   </nav>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=opinion5"></script>
 </body>
 </html>
