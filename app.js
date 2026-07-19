@@ -64,9 +64,6 @@ const DEFAULT_ACCENT = "var(--accent)";
 const TMDB_KEY = "cf097ea6bdd4ac2b03c73baf862d389a";
 const TMDB_API = "https://api.themoviedb.org/3";
 const TMDB_IMG = "https://image.tmdb.org/t/p/";
-// Для доставки и аккуратной обрезки изображений нужен только cloud name.
-// API secret здесь намеренно не используется: фронтенд GitHub Pages публичный.
-const CLOUDINARY_FETCH = "https://res.cloudinary.com/eqqg0ktm/image/fetch/";
 const TMDB_GENRES = {
   27: "Хоррор", 53: "Триллер", 18: "Драма", 878: "Фантастика",
   28: "Боевик", 35: "Комедия", 9648: "Детектив", 14: "Фэнтези",
@@ -128,7 +125,7 @@ const store = {
     }
     const films = [];
     for (const r of raw) {
-      try { films.push(JSON.parse(r)); } catch (e) { /* битую запись пропускаем */ }
+      try { films.push(withDirectTmdbImages(JSON.parse(r))); } catch (e) { /* битую запись пропускаем */ }
     }
     return films.sort((a, b) => b.id - a.id); // новые сверху
   },
@@ -246,28 +243,55 @@ function syncGenreAccent(genre) {
 }
 
 function microPreview(url, size) {
-  return url ? url.replace(/\/(?:w\d+|h\d+|original)\//, `/${size}/`) : "";
+  const source = legacyTmdbSource(url) || url || "";
+  return source.replace(/\/(?:w\d+|h\d+|original)\//, `/${size}/`);
 }
 
-function cloudinaryImage(source, transformations) {
-  return source ? `${CLOUDINARY_FETCH}${transformations}/${encodeURI(source)}` : "";
-}
-
-function cloudinarySource(url) {
-  if (!url || !url.startsWith(CLOUDINARY_FETCH)) return "";
-  const sourceAt = url.indexOf("/https://", CLOUDINARY_FETCH.length);
+// Старые записи могли сохранить обёрнутую ссылку. Забираем из неё исходный
+// адрес TMDB, но больше не отправляем изображения через сторонний сервис.
+function legacyTmdbSource(url) {
+  const marker = "/https://image.tmdb.org/";
+  const sourceAt = (url || "").indexOf(marker);
   return sourceAt < 0 ? "" : decodeURI(url.slice(sourceAt + 1));
 }
 
-function tmdbPoster(path, width, height, quality = "auto:good") {
-  const source = path ? TMDB_IMG + "original" + path : "";
-  return cloudinaryImage(source,
-    `f_auto,q_${quality},c_fill,g_auto,w_${width},h_${height}`);
+function tmdbImagePath(url) {
+  const source = legacyTmdbSource(url) || url || "";
+  const match = source.match(/^https:\/\/image\.tmdb\.org\/t\/p\/[^/]+(\/.*)$/);
+  return match ? match[1] : "";
 }
 
-function tmdbBackdrop(path, width, quality = "auto:good") {
-  const source = path ? TMDB_IMG + "original" + path : "";
-  return cloudinaryImage(source, `f_auto,q_${quality},c_limit,w_${width}`);
+function tmdbPoster(path, size = "w500") {
+  return path ? TMDB_IMG + size + path : "";
+}
+
+function tmdbBackdrop(path, size = "w1280") {
+  return path ? TMDB_IMG + size + path : "";
+}
+
+function originalBackdrop(url, size = "w1280") {
+  const path = tmdbImagePath(url);
+  return path ? tmdbBackdrop(path, size) : (legacyTmdbSource(url) || url || "");
+}
+
+function withDirectTmdbImages(film) {
+  const posterPath = tmdbImagePath(film.poster);
+  const backdropPath = tmdbImagePath(film.backdrop);
+  const poster = posterPath ? tmdbPoster(posterPath, "w500") : (legacyTmdbSource(film.poster) || film.poster || "");
+  const posterPreview = posterPath
+    ? tmdbPoster(posterPath, "w92")
+    : (legacyTmdbSource(film.posterPreview) || film.posterPreview || "");
+  return {
+    ...film,
+    poster,
+    posterPreview,
+    backdrop: backdropPath
+      ? tmdbBackdrop(backdropPath, "w1280")
+      : (legacyTmdbSource(film.backdrop) || film.backdrop || poster),
+    backdropPreview: backdropPath
+      ? tmdbBackdrop(backdropPath, "w300")
+      : (legacyTmdbSource(film.backdropPreview) || film.backdropPreview || posterPreview),
+  };
 }
 
 function backdropPreview(backdrop, poster, savedPreview, posterMicroPreview) {
@@ -291,7 +315,7 @@ function setBlurPicture(frame, previewImg, fullImg, preview, full) {
 
   previewImg.src = preview || target;
   previewImg.onerror = () => {
-    const fallback = cloudinarySource(preview || target);
+    const fallback = legacyTmdbSource(preview || target);
     if (fallback && previewImg.dataset.fallback !== fallback) {
       previewImg.dataset.fallback = fallback;
       previewImg.src = fallback;
@@ -305,7 +329,7 @@ function setBlurPicture(frame, previewImg, fullImg, preview, full) {
     });
   };
   fullImg.onerror = () => {
-    const fallback = cloudinarySource(target);
+    const fallback = legacyTmdbSource(target);
     if (fallback && fullImg.dataset.fallback !== fallback) {
       fullImg.dataset.fallback = fallback;
       fullImg.src = fallback;
@@ -578,11 +602,9 @@ function movieCard(movie, compact = false) {
   const button = el("button", compact ? "movie-card compact popular-card" : "movie-card search-result");
   button.type = "button";
   if (movie.poster_path) {
-    const posterWidth = compact ? 216 : 88;
-    const posterHeight = compact ? 308 : 124;
     button.append(blurPicture(
-      tmdbPoster(movie.poster_path, 20, compact ? 29 : 28, "auto:low"),
-      tmdbPoster(movie.poster_path, posterWidth, posterHeight),
+      tmdbPoster(movie.poster_path, "w92"),
+      tmdbPoster(movie.poster_path, compact ? "w342" : "w185"),
       "poster-media",
       compact ? "eager" : "lazy",
     ));
@@ -682,13 +704,13 @@ function selectMovie(movie) {
   form.year = yearOf(movie);
   form.genre = genreOf(movie);
   form.tmdbId = movie.id;
-  form.poster = tmdbPoster(movie.poster_path, 420, 600);
-  form.posterPreview = tmdbPoster(movie.poster_path, 20, 30, "auto:low");
+  form.poster = tmdbPoster(movie.poster_path, "w500");
+  form.posterPreview = tmdbPoster(movie.poster_path, "w92");
   form.backdrop = movie.backdrop_path
-    ? tmdbBackdrop(movie.backdrop_path, 1280)
+    ? tmdbBackdrop(movie.backdrop_path, "w1280")
     : form.poster;
   form.backdropPreview = movie.backdrop_path
-    ? tmdbBackdrop(movie.backdrop_path, 48, "auto:low")
+    ? tmdbBackdrop(movie.backdrop_path, "w300")
     : form.posterPreview;
   syncGenreAccent(form.genre);
   haptic("impact", "rigid");
@@ -1167,10 +1189,12 @@ function renderDiaryFeature(film) {
   const box = $("diary-feature");
   box.innerHTML = "";
   box.style.setProperty("--film-accent", genreColor(film.genre));
+  const featureBackdrop = originalBackdrop(film.backdrop, "w1280");
+  const featurePreview = originalBackdrop(film.backdropPreview || film.backdrop, "w300");
   setBlurBackground(
     box,
-    backdropPreview(film.backdrop, film.poster, film.backdropPreview, film.posterPreview),
-    film.backdrop,
+    featurePreview || backdropPreview(film.backdrop, film.poster, film.backdropPreview, film.posterPreview),
+    featureBackdrop || film.backdrop,
     "--feature-preview",
     "--feature-image",
     "is-image-loaded",
