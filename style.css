@@ -1,15 +1,37 @@
-/* Минимализм под тему Telegram: все цвета — из переменных темы,
-   поэтому приложение само подстраивается под светлую/тёмную тему.
-   Вторая величина в var() — запасной цвет для обычного браузера. */
+/* Кинодневник — стиль из макета Claude Design («Кинодневник.dc.html»):
+   тёплая светлая палитра, круглые карточки, фиолетовый акцент, золотые звёзды.
+   Сначала заданы обычные hex-цвета (работают везде), ниже — точные oklch
+   из макета для современных браузеров. */
 
 :root {
-  --bg: var(--tg-theme-secondary-bg-color, #efeff4);   /* фон страницы */
-  --card: var(--tg-theme-bg-color, #ffffff);           /* фон карточек */
-  --text: var(--tg-theme-text-color, #000000);
-  --hint: var(--tg-theme-hint-color, #8e8e93);         /* серый вспомогательный */
-  --accent: var(--tg-theme-button-color, #2481cc);     /* акцент = цвет кнопок темы */
-  --accent-text: var(--tg-theme-button-text-color, #ffffff);
-  --sep: rgba(128, 128, 128, .25);                     /* разделители */
+  --bg: #f5f1ea;        /* фон страницы */
+  --card: #fefdfb;      /* светлые карточки и низ */
+  --panel: #efeae2;     /* плашки статистики, карточка звёзд */
+  --line: #e9e4db;      /* разделители */
+  --line2: #e3ddd4;     /* дорожка слайдера, рамки полей */
+  --text: #2b2620;      /* основной текст */
+  --sub: #857d72;       /* серо-коричневый вспомогательный */
+  --accent: #6b5bd2;    /* фиолетовый акцент */
+  --gold: #97730a;      /* золото звёзд и оценок */
+  --teal: #00798a;      /* бирюза для жанров */
+  --err: #c14a3a;       /* ошибки */
+  --star-dim: #dcd6cc;  /* пустая звезда */
+}
+@supports (color: oklch(0.5 0.1 100)) {
+  :root {
+    --bg: oklch(0.96 0.012 75);
+    --card: oklch(0.995 0.004 75);
+    --panel: oklch(0.94 0.012 75);
+    --line: oklch(0.92 0.012 75);
+    --line2: oklch(0.9 0.012 75);
+    --text: oklch(0.22 0.02 60);
+    --sub: oklch(0.55 0.02 60);
+    --accent: oklch(0.52 0.14 280);
+    --gold: oklch(0.52 0.14 85);
+    --teal: oklch(0.52 0.14 200);
+    --err: oklch(0.55 0.16 25);
+    --star-dim: oklch(0.87 0.012 75);
+  }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -17,158 +39,269 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.45 -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  padding: 18px 14px 44px;
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   max-width: 560px;
   margin: 0 auto;
+  padding: 0 22px 170px;   /* снизу место под кнопку и вкладки */
+  min-height: 100vh;
 }
 
-h1 {
-  font-size: 19px;
-  font-weight: 700;
-  text-align: center;
-  margin-bottom: 14px;
+/* тёмный «герой»-фон, когда фильм выбран (шаг 1) */
+body.hero {
+  background-image:
+    linear-gradient(0deg, rgba(22, 21, 28, .99) 2%, rgba(25, 24, 32, .7) 32%,
+                    rgba(28, 27, 36, .4) 62%, rgba(30, 29, 38, .55) 100%),
+    linear-gradient(135deg, #6a5fc9, #4b4390);
+  background-attachment: fixed;
 }
 
-/* ── Вкладки ── */
-.tabs {
-  display: flex;
-  background: var(--card);
-  border-radius: 11px;
-  padding: 3px;
-  margin-bottom: 16px;
-}
-.tab {
-  flex: 1;
-  border: 0;
-  background: none;
-  color: var(--hint);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 8px 0;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.tab.on { background: var(--accent); color: var(--accent-text); }
-
-/* ── Карточки и поля ── */
-.card {
-  background: var(--card);
-  border-radius: 13px;
-  padding: 14px;
-  margin-bottom: 12px;
-}
-.lbl {
-  display: block;
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .09em;
-  color: var(--hint);
-  margin-bottom: 9px;
-}
-input, select, textarea {
-  width: 100%;
-  border: 0;
-  background: var(--bg);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 11px 12px;
-  font: inherit;
-  margin-bottom: 8px;
-}
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); }
-textarea { resize: vertical; }
-.row { display: flex; gap: 8px; }
-.row input { flex: 1; }
-.row select { flex: 1.6; }
-
-/* ── Слайдеры оценок ── */
-.crit { margin-bottom: 4px; }
-.crit-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.crit-name { font-size: 14.5px; }
-.crit-val { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
-.crit input[type=range] {
-  accent-color: var(--accent);   /* нативный минималистичный слайдер */
-  background: none;
-  padding: 0;
-  margin: 2px 0 6px;
-  height: 30px;
-}
-.crit.personal { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--sep); }
-.crit.personal .crit-name, .crit.personal .crit-val { color: var(--hint); }
-.crit.personal input[type=range] { accent-color: var(--hint); }
-
-/* ── Итог ── */
-.result { text-align: center; padding: 6px 0 16px; }
-.score { font-size: 46px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
-.stars { color: var(--accent); font-size: 19px; letter-spacing: 3px; }
-.verdict {
-  color: var(--hint);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .14em;
-  margin-top: 3px;
-}
-
-/* ── Кнопки ── */
-.btn {
-  display: block;
-  width: 100%;
-  border: 0;
-  border-radius: 12px;
-  padding: 13px;
-  font: inherit;
-  font-size: 16px;
-  font-weight: 600;
-  background: var(--accent);
-  color: var(--accent-text);
-  margin-bottom: 8px;
-  cursor: pointer;
-}
-.btn.ghost { background: none; color: var(--accent); }
-.btn:active { opacity: .75; }
-
-/* ── Дневник ── */
-.film { padding: 12px 2px; border-bottom: 1px solid var(--sep); }
-.film:last-child { border-bottom: 0; }
-.film-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-.film-title { font-weight: 600; font-size: 15.5px; }
-.film-meta { font-size: 13px; color: var(--hint); margin-top: 2px; }
-.badge { text-align: right; flex-shrink: 0; }
-.badge-num { font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
-.badge-stars { font-size: 11px; color: var(--accent); letter-spacing: 1px; }
-.film-detail { margin-top: 10px; }
-.film-crit { font-size: 13px; color: var(--hint); margin-bottom: 8px; }
-.film-review { font-size: 15px; line-height: 1.55; white-space: pre-wrap; margin-bottom: 10px; }
-.film-actions { display: flex; gap: 14px; }
-.linkbtn {
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 14px;
-  color: var(--accent);
-  cursor: pointer;
-  padding: 0;
-}
-.linkbtn.danger { color: #d9534f; }
-.empty { text-align: center; color: var(--hint); padding: 26px 8px; line-height: 1.6; }
-
-/* ── Мелочи ── */
-.err { color: #d9534f; font-size: 14px; text-align: center; margin: 6px 0; }
-.hint { color: var(--hint); }
-.small { font-size: 13px; margin-bottom: 8px; }
-.center { text-align: center; }
 .hidden { display: none !important; }
+.center { text-align: center; }
+
+/* ─── Шапка ─── */
+#header { padding: 22px 0 14px; }
+.head-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.head-title { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.head-sub { font-size: 12px; color: var(--sub); margin-top: 1px; }
+body.hero .head-title { color: #fff; }
+body.hero .head-sub { color: rgba(255, 255, 255, .75); }
+
+.back-btn {
+  width: 32px; height: 32px; flex: none;
+  border: 0; border-radius: 10px; background: var(--panel);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.back-btn .chev {
+  width: 8px; height: 8px; margin-left: 2px;
+  border-left: 2px solid var(--text); border-bottom: 2px solid var(--text);
+  transform: rotate(45deg);
+}
+body.hero .back-btn { background: rgba(255, 255, 255, .18); }
+body.hero .back-btn .chev { border-color: #fff; }
+
+.progress { display: flex; gap: 6px; }
+.progress i { flex: 1; height: 4px; border-radius: 2px; background: var(--line2); }
+.progress i.on { background: var(--accent); }
+body.hero .progress i { background: rgba(255, 255, 255, .25); }
+body.hero .progress i.on { background: #fff; }
+
+/* ─── Шаг 1: выбор фильма ─── */
+.ask { font-size: 23px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; margin-bottom: 6px; }
+.ask-sub { font-size: 14px; color: var(--sub); margin-bottom: 18px; }
+
+#f-query {
+  width: 100%; padding: 14px 16px; font: inherit; font-size: 15px;
+  border: 1.5px solid var(--line2); border-radius: 14px;
+  background: var(--card); color: var(--text); outline: none;
+}
+#f-query:focus { border-color: var(--accent); }
+#f-query.bad { border-color: var(--err); background: #f9ece9; }
+
+.field-err {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; color: var(--err); font-size: 13px;
+}
+.bang {
+  width: 15px; height: 15px; flex: none; border-radius: 50%;
+  background: var(--err); color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.add-box {
+  margin-top: 8px; border-radius: 14px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--line2);
+}
+.add-row {
+  display: block; width: 100%; text-align: left;
+  padding: 14px 16px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--accent);
+}
+
+/* герой выбранного фильма */
+.hero-wrap {
+  min-height: calc(100vh - 300px);
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+.clear-btn {
+  position: absolute; top: 22px; right: 22px; z-index: 2;
+  width: 36px; height: 36px; border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, .18); color: #fff;
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.hero-label {
+  font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: rgba(255, 255, 255, .8); margin-bottom: 6px;
+}
+.hero-title { font-size: 32px; font-weight: 700; color: #fff; line-height: 1.1; margin-bottom: 16px; }
+.hero-fields { display: flex; gap: 10px; padding-bottom: 8px; }
+.hero-fields input {
+  flex: 1; min-width: 0; padding: 12px 14px; font: inherit; font-size: 15px;
+  border: 1px solid rgba(255, 255, 255, .2); border-radius: 14px;
+  background: rgba(255, 255, 255, .12); color: #fff; outline: none;
+}
+.hero-fields input::placeholder { color: rgba(255, 255, 255, .55); }
+.hero-fields select {
+  flex: 1.3; min-width: 0; padding: 12px 14px; font: inherit; font-size: 15px;
+  border: 1px solid rgba(255, 255, 255, .2); border-radius: 14px;
+  background: #3a374d; color: #fff; outline: none;
+}
+
+/* ─── Звёзды ─── */
+.stars-sticky {
+  position: sticky; top: 0; z-index: 5;
+  margin: 0 -22px; padding: 8px 22px 12px;
+  background: linear-gradient(var(--bg) 78%, transparent);
+}
+.stars-card {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 18px 16px; background: var(--panel); border-radius: 18px;
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, .25);
+}
+.stars-final {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 0 22px;
+}
+.stars-row { display: flex; gap: 5px; }
+.star { position: relative; font-size: 30px; line-height: 1; color: var(--star-dim); }
+.stars-row.big .star { font-size: 34px; }
+.star .fill {
+  position: absolute; left: 0; top: 0; overflow: hidden;
+  color: var(--gold); white-space: nowrap;
+}
+.stars-num { font-size: 16px; font-weight: 700; margin-top: 8px; }
+.stars-tag { font-size: 12.5px; font-weight: 600; color: var(--sub); margin-top: 1px; }
+
+/* ─── Слайдеры оценок ─── */
+#sliders { display: flex; flex-direction: column; gap: 22px; padding: 8px 0; }
+.crit-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.crit-name { font-size: 14.5px; font-weight: 600; }
+.crit-badge {
+  min-width: 34px; text-align: center; padding: 4px 8px; border-radius: 10px;
+  background: #eceafa; color: var(--accent); font-size: 13.5px; font-weight: 700;
+}
+.crit.personal .crit-badge { background: #f2ead5; color: var(--gold); }
+
+input[type=range].sc-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 8px; border-radius: 5px; outline: none; cursor: pointer;
+  background: var(--line2); /* заливку прогресса ставит app.js */
+}
+input[type=range].sc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 0;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .25), 0 0 0 1px rgba(0, 0, 0, .05);
+  cursor: pointer;
+}
+input[type=range].sc-slider::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 0;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .25); cursor: pointer;
+}
+
+/* ─── Заметки и промпт ─── */
+.note-block { margin-bottom: 14px; }
+.sec-label {
+  font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--sub); margin-bottom: 8px;
+}
+.note-block textarea {
+  width: 100%; padding: 14px 16px; font: inherit; font-size: 14px;
+  border: 1px solid var(--line2); border-radius: 14px;
+  background: var(--card); color: var(--text); outline: none; resize: vertical;
+}
+.note-block textarea:focus { border-color: var(--accent); }
+.copy-btn {
+  width: 100%; margin-top: 8px; padding: 13px; font: inherit; font-size: 14px; font-weight: 700;
+  border: 1.5px solid var(--accent); border-radius: 14px;
+  background: none; color: var(--accent); cursor: pointer;
+}
+
+/* ─── Дневник: статистика ─── */
+#screen-diary { padding-top: 2px; }
+.tiles { display: flex; gap: 10px; margin-bottom: 22px; }
+.tile { flex: 1; min-width: 0; background: var(--panel); border-radius: 16px; padding: 14px; }
+.tile-num { font-size: 22px; font-weight: 700; }
+.tile-num.gold { color: var(--gold); }
+.tile-num.teal { color: var(--teal); }
+.tile-num.small { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-sub { font-size: 11.5px; color: var(--sub); margin-top: 2px; }
+
+.dist { display: flex; align-items: flex-end; gap: 10px; height: 90px; margin-bottom: 26px; }
+.dist-col {
+  flex: 1; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px;
+}
+.dist-bar { width: 100%; border-radius: 5px 5px 0 0; background: var(--gold); }
+.dist-label { font-size: 11px; color: var(--sub); }
+
+.genre-bars { display: flex; flex-direction: column; gap: 10px; margin-bottom: 26px; }
+.gb-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+.gb-name { font-weight: 600; }
+.gb-count { color: var(--sub); }
+.gb-track { height: 7px; border-radius: 4px; background: var(--line2); overflow: hidden; }
+.gb-fill { height: 100%; border-radius: 4px; background: var(--teal); }
+
+/* ─── Дневник: записи ─── */
+.film { border-bottom: 1px solid var(--line); }
+.film:last-child { border-bottom: 0; }
+.film-top { display: flex; align-items: center; gap: 12px; padding: 10px 0; cursor: pointer; }
+.poster {
+  width: 38px; height: 54px; border-radius: 7px; flex: none;
+  background: repeating-linear-gradient(45deg, var(--line2), var(--line2) 5px, var(--line) 5px, var(--line) 10px);
+}
+.film-info { flex: 1; min-width: 0; }
+.film-title {
+  font-size: 14px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.film-meta { font-size: 12px; color: var(--sub); }
+.film-score { font-size: 14px; font-weight: 700; color: var(--gold); flex: none; }
+.film-detail { padding: 2px 0 12px; }
+.film-crit { font-size: 13px; color: var(--sub); margin-bottom: 8px; }
+.film-review { font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; margin-bottom: 10px; }
+.film-actions { display: flex; gap: 16px; }
+.linkbtn {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 14px;
+  font-weight: 600; color: var(--accent); cursor: pointer;
+}
+.linkbtn.danger { color: var(--err); }
+.empty { text-align: center; color: var(--sub); padding: 26px 8px; line-height: 1.6; }
+
+/* ─── Низ: главная кнопка и вкладки ─── */
+#footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  max-width: 560px; margin: 0 auto; z-index: 10;
+}
+#footer-action { padding: 12px 22px 14px; }
+body.hero #footer-action { background: none; }
+body:not(.hero) #footer-action { background: linear-gradient(transparent, var(--bg) 40%); }
+.primary {
+  width: 100%; padding: 16px; border: 0; border-radius: 16px;
+  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+  background: var(--accent); color: #fff;
+  box-shadow: 0 8px 20px -6px rgba(107, 91, 210, .5);
+}
+.primary.muted { background: var(--line2); color: var(--sub); box-shadow: none; }
+.primary:active { transform: scale(.98); }
+#btn-save-empty { display: block; margin: 10px auto 0; }
+
+.tabbar {
+  display: flex; background: var(--card); border-top: 1px solid var(--line);
+  padding: 8px 22px calc(8px + env(safe-area-inset-bottom));
+}
+.tabbtn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--sub);
+}
+.tabbtn.on { color: var(--accent); }
+
+/* иконки вкладок, нарисованы CSS-ом */
+.ic-plus { width: 18px; height: 18px; position: relative; }
+.ic-plus i { position: absolute; background: currentColor; border-radius: 1px; }
+.ic-plus i:first-child { left: 8px; top: 2px; width: 2px; height: 14px; }
+.ic-plus i:last-child { left: 2px; top: 8px; width: 14px; height: 2px; }
+.ic-chart { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+.ic-chart i { width: 3px; background: currentColor; border-radius: 1px; }
+.ic-chart i:nth-child(1) { height: 7px; }
+.ic-chart i:nth-child(2) { height: 12px; }
+.ic-chart i:nth-child(3) { height: 16px; }

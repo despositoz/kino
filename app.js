@@ -1,7 +1,6 @@
-// Кинодневник — логика мини-аппа.
-// Хранение: облако Telegram (CloudStorage) — привязано к твоему аккаунту
-// и синхронизируется между устройствами. Вне Telegram (обычный браузер)
-// используется localStorage, чтобы можно было тестировать.
+// Кинодневник — логика мини-аппа (дизайн из Claude Design).
+// Оценка проходит в 4 шага: фильм → оценки → итог с заметками → запись.
+// Хранение: облако Telegram (CloudStorage); вне Telegram — localStorage.
 
 "use strict";
 
@@ -40,7 +39,9 @@ const verdict = (s) => {
 
 // 10-балльная → 5-балльная с половинками (как звёзды на Letterboxd)
 const toFive = (s10) => Math.round(s10) / 2;
-const stars = (s10) => {
+
+// текстовые звёзды для экспорта: ★★★½☆
+const starsText = (s10) => {
   const v = toFive(s10);
   const full = Math.floor(v);
   return "★".repeat(full) + (v % 1 ? "½" : "") + "☆".repeat(5 - Math.ceil(v));
@@ -54,7 +55,6 @@ const calcQuality = (scores) => {
 
 // ─── Хранилище: облако Telegram или localStorage ─────────────────
 // Каждый фильм — отдельный ключ "film_<id>", значение — JSON.
-// (у облака Telegram лимит 4096 символов на значение — записи влезают с запасом)
 
 const cloud = {
   getKeys: () => new Promise((res, rej) =>
@@ -71,7 +71,7 @@ const useCloud = inTelegram && tg.CloudStorage && tg.isVersionAtLeast("6.9");
 
 const store = {
   async getAll() {
-    let raw = []; // массив JSON-строк
+    let raw = [];
     if (useCloud) {
       const keys = (await cloud.getKeys()).filter((k) => k.startsWith("film_"));
       if (keys.length) raw = Object.values(await cloud.getItems(keys));
@@ -99,7 +99,7 @@ const store = {
   },
 };
 
-// ─── Состояние формы ─────────────────────────────────────────────
+// ─── Состояние ───────────────────────────────────────────────────
 
 const emptyForm = () => ({
   title: "", year: "", genre: GENRES[0],
@@ -109,6 +109,11 @@ const emptyForm = () => ({
 });
 
 let form = emptyForm();
+let tab = "rate";   // "rate" | "diary"
+let step = 0;       // 0 фильм · 1 оценки · 2 итог · 3 запись
+let expandedId = null;
+
+const STEP_TITLES = ["Фильм", "Оценки", "Итог", "Запись"];
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
 
@@ -138,7 +143,6 @@ ${filmContext()}
 
 const $ = (id) => document.getElementById(id);
 
-// создать элемент: el("div", "card", "текст")
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -176,95 +180,168 @@ function haptic(kind) {
   }
 }
 
-// ─── Вкладки и стадии ────────────────────────────────────────────
+// нарисовать звёзды с половинками: пять ★, у каждой золотая «заливка» 0/50/100%
+function renderStars(container, five) {
+  container.innerHTML = "";
+  for (let i = 0; i < 5; i++) {
+    const star = el("div", "star", "★");
+    const v = five - i;
+    const pct = v >= 1 ? 100 : v >= 0.5 ? 50 : 0;
+    const fill = el("div", "fill", "★");
+    fill.style.width = pct + "%";
+    star.append(fill);
+    container.append(star);
+  }
+}
+
+// ─── Переключение вкладок и шагов ────────────────────────────────
 
 function showTab(name) {
+  tab = name;
   $("screen-rate").classList.toggle("hidden", name !== "rate");
   $("screen-diary").classList.toggle("hidden", name !== "diary");
+  $("head-rate").classList.toggle("hidden", name !== "rate");
+  $("head-diary").classList.toggle("hidden", name !== "diary");
+  $("footer-action").classList.toggle("hidden", name !== "rate");
   $("tab-rate").classList.toggle("on", name === "rate");
   $("tab-diary").classList.toggle("on", name === "diary");
+  document.body.classList.toggle("hero", name === "rate" && step === 0 && !!form.title);
   if (name === "diary") renderDiary();
 }
 
-function showStage(name) { // "form" | "entry"
-  $("stage-form").classList.toggle("hidden", name !== "form");
-  $("stage-entry").classList.toggle("hidden", name !== "entry");
+function showStep(n) {
+  step = n;
+  for (let i = 0; i <= 3; i++) $("step-" + i).classList.toggle("hidden", i !== n);
+  $("head-title").textContent = STEP_TITLES[n];
+  $("head-sub").textContent = `Шаг ${n + 1} из 4`;
+  const segs = $("progress").children;
+  for (let i = 0; i < segs.length; i++) segs[i].classList.toggle("on", i <= n);
+  $("btn-back").classList.toggle("hidden", n === 0);
+  document.body.classList.toggle("hero", n === 0 && !!form.title);
+
+  const primary = $("btn-primary");
+  primary.textContent =
+    n === 0 ? "Далее" : n === 1 ? "Далее: итог" : n === 2 ? "Далее: запись" : "Сохранить запись";
+  primary.classList.toggle("muted", n === 0 && !form.title);
+  $("btn-save-empty").classList.toggle("hidden", n !== 3);
+
+  if (n === 1) updateStars("1");
+  if (n === 2) updateStars("2");
+  if (n === 3) $("e-prompt").value = manualPrompt();
   window.scrollTo(0, 0);
 }
 
-// ─── Экран «Оценка»: форма ───────────────────────────────────────
+// ─── Шаг 1: выбор фильма ─────────────────────────────────────────
 
-function buildForm() {
-  const sel = $("f-genre");
-  GENRES.forEach((g) => sel.append(new Option(g, g)));
+function onQueryInput() {
+  const q = $("f-query").value.trim();
+  $("add-box").classList.toggle("hidden", q.length < 2);
+  $("add-name").textContent = q;
+  $("query-err").classList.add("hidden");
+  $("f-query").classList.remove("bad");
+}
 
+function addFilm() {
+  const q = $("f-query").value.trim();
+  if (q.length < 2) return;
+  form.title = q;
+  $("f-query").value = "";
+  $("add-box").classList.add("hidden");
+  $("hero-title").textContent = form.title;
+  $("film-search").classList.add("hidden");
+  $("film-hero").classList.remove("hidden");
+  showStep(0); // обновить герой-фон и кнопку
+}
+
+function clearFilm() {
+  form.title = "";
+  $("film-search").classList.remove("hidden");
+  $("film-hero").classList.add("hidden");
+  showStep(0);
+}
+
+// ─── Шаг 2: слайдеры ─────────────────────────────────────────────
+
+function paintSlider(range, color) {
+  const pct = (+range.value) * 10;
+  range.style.background =
+    `linear-gradient(90deg, ${color} 0%, ${color} ${pct}%, var(--line2) ${pct}%, var(--line2) 100%)`;
+}
+
+function buildSliders() {
   const box = $("sliders");
-  const makeSlider = (name, value, cls, oninput) => {
-    const wrap = el("div", "crit" + (cls ? " " + cls : ""));
+  const accent = "#6b5bd2", gold = "#97730a";
+
+  const make = (name, value, personal, oninput) => {
+    const wrap = el("div", "crit" + (personal ? " personal" : ""));
     const top = el("div", "crit-top");
-    const label = el("span", "crit-name", name);
-    const val = el("span", "crit-val", String(value));
-    top.append(label, val);
+    const label = el("div", "crit-name", name);
+    const badge = el("div", "crit-badge", String(value));
+    top.append(label, badge);
     const range = document.createElement("input");
     range.type = "range";
+    range.className = "sc-slider";
     range.min = "1"; range.max = "10"; range.step = "1";
     range.value = String(value);
     range.setAttribute("aria-label", name);
+    const color = personal ? gold : accent;
+    paintSlider(range, color);
     range.addEventListener("input", () => {
-      val.textContent = range.value;
+      badge.textContent = range.value;
+      paintSlider(range, color);
       oninput(+range.value);
-      renderResult();
+      updateStars("1");
     });
     wrap.append(top, range);
     box.append(wrap);
   };
 
   CRITERIA.forEach((c) =>
-    makeSlider(c.label, form.scores[c.id], "", (v) => { form.scores[c.id] = v; }));
-  makeSlider("Личное удовольствие («зашло»)", form.personal, "personal",
+    make(c.label, form.scores[c.id], false, (v) => { form.scores[c.id] = v; }));
+  make("Личное удовольствие («зашло»)", form.personal, true,
     (v) => { form.personal = v; });
-
-  renderResult();
 }
 
-function renderResult() {
+// обновить карточку звёзд (suffix "1" — на шаге оценок, "2" — на итоге)
+function updateStars(suffix) {
   const q = calcQuality(form.scores);
-  $("r-score").textContent = q.toFixed(1);
-  $("r-stars").textContent = stars(q) + "  " + toFive(q) + "/5";
-  $("r-verdict").textContent = verdict(q);
-  const gap = Math.abs(q - form.personal) >= 2
-    ? " — качество и удовольствие расходятся, это нормально" : "";
-  $("r-personal").textContent =
-    `Зашло на ${form.personal} (${toFive(form.personal)}/5)` + gap;
+  const five = toFive(q);
+  renderStars($("stars-" + suffix), five);
+  $("stars-" + suffix + "-num").textContent = five + " из 5";
+  let tag = verdict(q) + " · " + q.toFixed(1) + "/10";
+  if (Math.abs(q - form.personal) >= 2) tag += " · зашло на " + form.personal;
+  $("stars-" + suffix + "-tag").textContent = tag;
 }
 
-function readTextFields() {
-  form.title = $("f-title").value.trim();
-  form.year = $("f-year").value.trim();
-  form.genre = $("f-genre").value;
-  form.liked = $("f-liked").value.trim();
-  form.disliked = $("f-disliked").value.trim();
-  form.moment = $("f-moment").value.trim();
-}
+// ─── Главная кнопка ──────────────────────────────────────────────
 
-// ─── Экран «Оценка»: шаг записи ──────────────────────────────────
-
-function openEntryStage() {
-  readTextFields();
-  if (!form.title) {
-    $("form-err").textContent = "Укажи название фильма.";
-    $("form-err").classList.remove("hidden");
-    return;
+function primaryAction() {
+  if (step === 0) {
+    if (!form.title) {
+      $("query-err").classList.remove("hidden");
+      $("f-query").classList.add("bad");
+      return;
+    }
+    form.year = $("f-year").value.trim();
+    form.genre = $("f-genre").value;
+    showStep(1);
+  } else if (step === 1) {
+    showStep(2);
+  } else if (step === 2) {
+    form.liked = $("f-liked").value.trim();
+    form.disliked = $("f-disliked").value.trim();
+    form.moment = $("f-moment").value.trim();
+    showStep(3);
+  } else {
+    const review = $("e-review").value.trim();
+    if (!review) {
+      $("entry-err-text").textContent =
+        "Вставь текст записи или нажми «Сохранить без записи».";
+      $("entry-err").classList.remove("hidden");
+      return;
+    }
+    saveEntry(review);
   }
-  $("form-err").classList.add("hidden");
-  const q = calcQuality(form.scores);
-  $("e-score").textContent = q.toFixed(1);
-  $("e-stars").textContent = stars(q) + "  " + toFive(q) + "/5";
-  $("e-verdict").textContent = verdict(q);
-  $("e-title").textContent =
-    `${form.title}${form.year ? ` (${form.year})` : ""} · зашло на ${form.personal}`;
-  $("e-prompt").value = manualPrompt();
-  showStage("entry");
 }
 
 async function saveEntry(review) {
@@ -281,26 +358,27 @@ async function saveEntry(review) {
   try {
     await store.save(film);
   } catch (e) {
-    $("entry-err").textContent = "Не сохранилось: " + (e.message || e) + ". Попробуй ещё раз.";
+    $("entry-err-text").textContent = "Не сохранилось: " + (e.message || e) + ". Попробуй ещё раз.";
     $("entry-err").classList.remove("hidden");
     return;
   }
   $("entry-err").classList.add("hidden");
   haptic("success");
+
   // сброс формы и переход в дневник
   form = emptyForm();
-  $("f-title").value = ""; $("f-year").value = ""; $("f-genre").value = GENRES[0];
+  $("f-query").value = ""; $("f-year").value = ""; $("f-genre").value = GENRES[0];
   $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
   $("e-review").value = "";
   $("sliders").innerHTML = "";
-  buildForm();
-  showStage("form");
+  buildSliders();
+  $("film-search").classList.remove("hidden");
+  $("film-hero").classList.add("hidden");
+  showStep(0);
   showTab("diary");
 }
 
-// ─── Экран «Дневник» ─────────────────────────────────────────────
-
-let expandedId = null;
+// ─── Дневник: статистика и записи ────────────────────────────────
 
 async function renderDiary() {
   const list = $("diary-list");
@@ -313,26 +391,66 @@ async function renderDiary() {
     return;
   }
   if (!films.length) {
-    list.append(el("div", "empty", "Дневник пока пуст. Оцени первый фильм на вкладке «Оценка»."));
+    $("stats").classList.add("hidden");
+    list.append(el("div", "empty", "Дневник пока пуст. Оцени первый фильм на вкладке «Оценить»."));
     return;
   }
+  $("stats").classList.remove("hidden");
+  renderStats(films);
   films.forEach((f) => list.append(filmItem(f)));
+}
+
+function renderStats(films) {
+  // плашки: сколько фильмов, средняя оценка (по 5-балльной), любимый жанр
+  $("st-total").textContent = films.length;
+  const avg = films.reduce((s, f) => s + toFive(f.quality), 0) / films.length;
+  $("st-avg").textContent = (Math.round(avg * 10) / 10).toFixed(1);
+
+  const byGenre = {};
+  films.forEach((f) => { byGenre[f.genre] = (byGenre[f.genre] || 0) + 1; });
+  const sorted = Object.entries(byGenre).sort((a, b) => b[1] - a[1]);
+  $("st-genre").textContent = sorted[0][0];
+
+  // распределение по звёздам 1–5
+  const dist = $("dist");
+  dist.innerHTML = "";
+  const counts = [1, 2, 3, 4, 5].map(
+    (star) => films.filter((f) => Math.round(toFive(f.quality)) === star).length);
+  const maxCount = Math.max(1, ...counts);
+  counts.forEach((c, i) => {
+    const col = el("div", "dist-col");
+    const bar = el("div", "dist-bar");
+    bar.style.height = Math.max(4, (c / maxCount) * 100) + "%";
+    col.append(bar, el("div", "dist-label", String(i + 1)));
+    dist.append(col);
+  });
+
+  // топ-3 жанров
+  const gb = $("genre-bars");
+  gb.innerHTML = "";
+  const maxGenre = sorted[0][1];
+  sorted.slice(0, 3).forEach(([name, count]) => {
+    const row = el("div");
+    const top = el("div", "gb-top");
+    top.append(el("div", "gb-name", name), el("div", "gb-count", String(count)));
+    const track = el("div", "gb-track");
+    const fill = el("div", "gb-fill");
+    fill.style.width = (count / maxGenre) * 100 + "%";
+    track.append(fill);
+    row.append(top, track);
+    gb.append(row);
+  });
 }
 
 function filmItem(f) {
   const item = el("div", "film");
   const top = el("div", "film-top");
-
-  const left = el("div");
-  left.append(el("div", "film-title", f.title + (f.year ? ` (${f.year})` : "")));
-  left.append(el("div", "film-meta",
-    `${f.genre} · ${f.date} · зашло на ${f.personal} (${toFive(f.personal)}/5)`));
-
-  const badge = el("div", "badge");
-  badge.append(el("div", "badge-num", f.quality.toFixed(1)));
-  badge.append(el("div", "badge-stars", stars(f.quality)));
-
-  top.append(left, badge);
+  top.append(el("div", "poster"));
+  const info = el("div", "film-info");
+  info.append(el("div", "film-title", f.title + (f.year ? ` (${f.year})` : "")));
+  info.append(el("div", "film-meta", `${f.genre} · ${f.date}`));
+  top.append(info);
+  top.append(el("div", "film-score", "★ " + toFive(f.quality).toFixed(1)));
   top.addEventListener("click", () => {
     expandedId = expandedId === f.id ? null : f.id;
     renderDiary();
@@ -342,14 +460,15 @@ function filmItem(f) {
   if (expandedId === f.id) {
     const detail = el("div", "film-detail");
     detail.append(el("div", "film-crit",
-      CRITERIA.map((c) => `${c.label}: ${f.scores[c.id]}`).join(" · ")));
+      CRITERIA.map((c) => `${c.label}: ${f.scores[c.id]}`).join(" · ") +
+      ` · качество ${f.quality.toFixed(1)}/10 · зашло на ${f.personal}`));
     if (f.review) detail.append(el("div", "film-review", f.review));
 
     const actions = el("div", "film-actions");
     const exp = el("button", "linkbtn", "Экспорт текстом");
     exp.addEventListener("click", async () => {
       const text = `«${f.title}»${f.year ? ` (${f.year})` : ""}\n` +
-        `${stars(f.quality)} ${toFive(f.quality)}/5 · качество ${f.quality.toFixed(1)}/10 · зашло ${f.personal}/10` +
+        `${starsText(f.quality)} ${toFive(f.quality)}/5 · качество ${f.quality.toFixed(1)}/10 · зашло ${f.personal}/10` +
         (f.review ? `\n\n${f.review}` : "");
       exp.textContent = (await copyText(text)) ? "Скопировано ✓" : "Не удалось скопировать";
       setTimeout(() => { exp.textContent = "Экспорт текстом"; }, 2000);
@@ -370,10 +489,16 @@ function filmItem(f) {
 
 // ─── Запуск ──────────────────────────────────────────────────────
 
-$("tab-rate").addEventListener("click", () => showTab("rate"));
-$("tab-diary").addEventListener("click", () => showTab("diary"));
-$("btn-next").addEventListener("click", openEntryStage);
-$("btn-back").addEventListener("click", () => showStage("form"));
+GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
+buildSliders();
+
+$("f-query").addEventListener("input", onQueryInput);
+$("f-query").addEventListener("keydown", (e) => { if (e.key === "Enter") addFilm(); });
+$("btn-add").addEventListener("click", addFilm);
+$("btn-clear").addEventListener("click", clearFilm);
+$("btn-back").addEventListener("click", () => showStep(step - 1));
+$("btn-primary").addEventListener("click", primaryAction);
+$("btn-save-empty").addEventListener("click", () => saveEntry(""));
 
 $("btn-copy").addEventListener("click", async () => {
   const ok = await copyText($("e-prompt").value);
@@ -381,18 +506,10 @@ $("btn-copy").addEventListener("click", async () => {
   setTimeout(() => { $("btn-copy").textContent = "Скопировать промпт"; }, 2000);
 });
 
-$("btn-save").addEventListener("click", () => {
-  const review = $("e-review").value.trim();
-  if (!review) {
-    $("entry-err").textContent = "Вставь текст записи (или нажми «Сохранить без записи»).";
-    $("entry-err").classList.remove("hidden");
-    return;
-  }
-  saveEntry(review);
-});
-
-$("btn-save-empty").addEventListener("click", () => saveEntry(""));
+$("tab-rate").addEventListener("click", () => showTab("rate"));
+$("tab-diary").addEventListener("click", () => showTab("diary"));
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 
-buildForm();
+showStep(0);
+showTab("rate");

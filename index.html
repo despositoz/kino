@@ -10,84 +10,142 @@
 </head>
 <body>
 
-<h1>Кинодневник</h1>
+<!-- ─── Шапка: заголовок шага и прогресс (вкладка «Оценить») ─── -->
+<header id="header">
+  <div id="head-rate">
+    <div class="head-row">
+      <button id="btn-back" class="back-btn hidden" aria-label="Назад"><span class="chev"></span></button>
+      <div>
+        <div id="head-title" class="head-title">Фильм</div>
+        <div id="head-sub" class="head-sub">Шаг 1 из 4</div>
+      </div>
+    </div>
+    <div id="progress" class="progress"><i></i><i></i><i></i><i></i></div>
+  </div>
+  <div id="head-diary" class="hidden">
+    <div class="head-title">Дневник</div>
+    <div class="head-sub">статистика и все записи</div>
+  </div>
+</header>
 
-<nav class="tabs">
-  <button id="tab-rate" class="tab on">Оценка</button>
-  <button id="tab-diary" class="tab">Дневник</button>
-</nav>
-
-<!-- ─── Экран «Оценка», шаг 1: форма ─── -->
+<!-- ─── Вкладка «Оценить»: 4 шага ─── -->
 <main id="screen-rate">
-  <section id="stage-form">
-    <div class="card">
-      <label class="lbl" for="f-title">Фильм</label>
-      <input id="f-title" placeholder="Название" autocomplete="off">
-      <div class="row">
-        <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
-        <select id="f-genre"></select>
+
+  <!-- Шаг 1: какой фильм -->
+  <section id="step-0">
+    <div id="film-search">
+      <h2 class="ask">Какой фильм хочешь оценить?</h2>
+      <p class="ask-sub">Напиши название и добавь его в дневник</p>
+      <input id="f-query" placeholder="Начни вводить название" autocomplete="off">
+      <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и нажми «Добавить».</div>
+      <div id="add-box" class="add-box hidden">
+        <button id="btn-add" class="add-row">Добавить «<span id="add-name"></span>»</button>
       </div>
     </div>
 
-    <div class="card">
-      <label class="lbl">Оценки</label>
-      <div id="sliders"><!-- слайдеры создаёт app.js --></div>
+    <!-- герой-экран выбранного фильма (тёмный фон включается классом body.hero) -->
+    <div id="film-hero" class="hero-wrap hidden">
+      <button id="btn-clear" class="clear-btn" aria-label="Сбросить фильм">×</button>
+      <div class="hero-bottom">
+        <div class="hero-label">Ты оцениваешь</div>
+        <div id="hero-title" class="hero-title"></div>
+        <div class="hero-fields">
+          <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
+          <select id="f-genre"></select>
+        </div>
+      </div>
     </div>
+  </section>
 
-    <div class="result">
-      <div id="r-score" class="score"></div>
-      <div id="r-stars" class="stars"></div>
-      <div id="r-verdict" class="verdict"></div>
-      <div id="r-personal" class="hint small"></div>
+  <!-- Шаг 2: оценки -->
+  <section id="step-1" class="hidden">
+    <div class="stars-sticky">
+      <div class="stars-card">
+        <div id="stars-1" class="stars-row"></div>
+        <div id="stars-1-num" class="stars-num">3.5 из 5</div>
+        <div id="stars-1-tag" class="stars-tag">Хорошо</div>
+      </div>
     </div>
+    <div id="sliders"><!-- слайдеры создаёт app.js --></div>
+  </section>
 
-    <div class="card">
-      <label class="lbl">Заметки для записи</label>
+  <!-- Шаг 3: итог и заметки -->
+  <section id="step-2" class="hidden">
+    <div class="stars-final">
+      <div id="stars-2" class="stars-row big"></div>
+      <div id="stars-2-num" class="stars-num"></div>
+      <div id="stars-2-tag" class="stars-tag"></div>
+    </div>
+    <div class="note-block">
+      <div class="sec-label">Что понравилось</div>
       <textarea id="f-liked" placeholder="Что понравилось" rows="2"></textarea>
+    </div>
+    <div class="note-block">
+      <div class="sec-label">Что не понравилось</div>
       <textarea id="f-disliked" placeholder="Что не понравилось" rows="2"></textarea>
+    </div>
+    <div class="note-block">
+      <div class="sec-label">Запомнившийся момент</div>
       <textarea id="f-moment" placeholder="Запомнившийся момент или сцена" rows="2"></textarea>
     </div>
-
-    <p id="form-err" class="err hidden"></p>
-    <button id="btn-next" class="btn">Дальше: запись</button>
   </section>
 
-  <!-- ─── Экран «Оценка», шаг 2: промпт и сохранение ─── -->
-  <section id="stage-entry" class="hidden">
-    <div class="result">
-      <div id="e-score" class="score"></div>
-      <div id="e-stars" class="stars"></div>
-      <div id="e-verdict" class="verdict"></div>
-      <div id="e-title" class="hint small"></div>
+  <!-- Шаг 4: запись через чат с Claude -->
+  <section id="step-3" class="hidden">
+    <div class="note-block">
+      <div class="sec-label">Промпт для Claude</div>
+      <p class="ask-sub">Скопируй промпт, отправь его Claude в чате, а готовый текст записи вставь в поле ниже.</p>
+      <textarea id="e-prompt" readonly rows="8"></textarea>
+      <button id="btn-copy" class="copy-btn">Скопировать промпт</button>
     </div>
-
-    <div class="card">
-      <label class="lbl">Промпт для Claude</label>
-      <p class="hint small">Скопируй промпт, отправь его Claude в чате, а готовый текст записи вставь в поле ниже.</p>
-      <textarea id="e-prompt" readonly rows="9"></textarea>
-      <button id="btn-copy" class="btn">Скопировать промпт</button>
-    </div>
-
-    <div class="card">
-      <label class="lbl">Готовая запись</label>
+    <div class="note-block">
+      <div class="sec-label">Готовая запись</div>
       <textarea id="e-review" placeholder="Вставь сюда текст записи…" rows="5"></textarea>
-      <p id="entry-err" class="err hidden"></p>
-      <button id="btn-save" class="btn">Сохранить в дневник</button>
-      <button id="btn-save-empty" class="btn ghost">Сохранить без записи</button>
-      <button id="btn-back" class="btn ghost">← Назад к оценкам</button>
+      <p id="entry-err" class="field-err hidden"><span class="bang">!</span><span id="entry-err-text"></span></p>
     </div>
   </section>
 </main>
 
-<!-- ─── Экран «Дневник» ─── -->
+<!-- ─── Вкладка «Дневник»: статистика + записи ─── -->
 <main id="screen-diary" class="hidden">
-  <p id="storage-note" class="hint small center hidden">
+  <p id="storage-note" class="ask-sub center hidden">
     Открыто вне Telegram — записи сохраняются только в этом браузере.
   </p>
-  <div class="card" id="diary-card">
-    <div id="diary-list"></div>
+
+  <div id="stats" class="hidden">
+    <div class="tiles">
+      <div class="tile"><div id="st-total" class="tile-num">0</div><div class="tile-sub">фильмов</div></div>
+      <div class="tile"><div id="st-avg" class="tile-num gold">—</div><div class="tile-sub">средняя оценка</div></div>
+      <div class="tile"><div id="st-genre" class="tile-num teal small">—</div><div class="tile-sub">любимый жанр</div></div>
+    </div>
+
+    <div class="sec-label">Распределение оценок</div>
+    <div id="dist" class="dist"></div>
+
+    <div class="sec-label">Топ жанров</div>
+    <div id="genre-bars" class="genre-bars"></div>
+
+    <div class="sec-label">Записи</div>
   </div>
+
+  <div id="diary-list"></div>
 </main>
+
+<!-- ─── Низ: главная кнопка шага + вкладки ─── -->
+<footer id="footer">
+  <div id="footer-action">
+    <button id="btn-primary" class="primary">Далее</button>
+    <button id="btn-save-empty" class="linkbtn hidden">Сохранить без записи</button>
+  </div>
+  <nav class="tabbar">
+    <button id="tab-rate" class="tabbtn on">
+      <span class="ic-plus"><i></i><i></i></span>Оценить
+    </button>
+    <button id="tab-diary" class="tabbtn">
+      <span class="ic-chart"><i></i><i></i><i></i></span>Дневник
+    </button>
+  </nav>
+</footer>
 
 <script src="app.js"></script>
 </body>
