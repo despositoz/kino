@@ -9,10 +9,33 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 // initData не пустой только внутри настоящего Telegram
 const inTelegram = !!(tg && tg.initData);
+let fullscreenUnavailable = false;
+
+function requestAppFullscreen() {
+  if (!tg) return;
+
+  // expand работает в старых клиентах, requestFullscreen — в Telegram 8.0+.
+  tg.expand();
+  if (fullscreenUnavailable || tg.isFullscreen) return;
+  if (typeof tg.requestFullscreen !== "function" || !tg.isVersionAtLeast("8.0")) return;
+
+  try {
+    tg.requestFullscreen();
+  } catch (_) {
+    fullscreenUnavailable = true;
+  }
+}
 
 if (tg) {
   tg.ready();
-  tg.expand(); // развернуть мини-апп на весь экран
+  requestAppFullscreen();
+
+  if (typeof tg.onEvent === "function" && tg.isVersionAtLeast("8.0")) {
+    tg.onEvent("fullscreenFailed", (event) => {
+      if (!event || event.error !== "ALREADY_FULLSCREEN") fullscreenUnavailable = true;
+      tg.expand();
+    });
+  }
 }
 
 // ─── Критерии и формулы (один в один из kinodnevnik.jsx) ─────────
@@ -137,6 +160,7 @@ let step = 0;       // 0 фильм · 1 оценки · 2 итог · 3 зап�
 let expandedId = null;
 let searchTimer = null;
 let searchController = null;
+let searchBlurTimer = null;
 let popularLoaded = false;
 
 const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
@@ -385,6 +409,7 @@ async function showTab(name) {
   const changed = previousTab !== name;
   const nextScreen = $("screen-" + name);
   tab = name;
+  if (name !== "rate") closeSearchKeyboard();
   $("screen-rate").classList.toggle("hidden", name !== "rate");
   $("screen-feed").classList.toggle("hidden", name !== "feed");
   $("screen-diary").classList.toggle("hidden", name !== "diary");
@@ -466,12 +491,17 @@ function onQueryInput() {
   $("f-query").classList.remove("bad");
   clearTimeout(searchTimer);
   if (searchController) searchController.abort();
-  if (q.length < 2) {
+  if (!q) {
     resetSearchView();
     return;
   }
   $("popular").classList.add("hidden");
   $("results").classList.remove("hidden");
+  if (q.length < 2) {
+    $("results").setAttribute("aria-busy", "false");
+    $("results").innerHTML = '<div class="catalog-state">Введи ещё одну букву</div>';
+    return;
+  }
   $("results").setAttribute("aria-busy", "true");
   $("results").innerHTML = '<div class="catalog-state">Ищу фильмы…</div>';
   searchTimer = setTimeout(() => searchMovies(q), 350);
@@ -486,6 +516,35 @@ function resetSearchView() {
   $("results").classList.add("hidden");
   $("results").setAttribute("aria-busy", "false");
   $("popular").classList.remove("hidden");
+}
+
+function syncSearchViewport() {
+  if (!document.body.classList.contains("search-active")) return;
+  const viewport = window.visualViewport;
+  const inputBottom = $("f-query").getBoundingClientRect().bottom;
+  const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+  const available = Math.max(150, viewportBottom - inputBottom - 12);
+  document.documentElement.style.setProperty("--search-results-height", `${available}px`);
+}
+
+function setSearchMode(active) {
+  clearTimeout(searchBlurTimer);
+  document.body.classList.toggle("search-active", active);
+  $("film-search").classList.toggle("search-focused", active);
+  if (active) {
+    requestAnimationFrame(() => {
+      syncSearchViewport();
+      $("f-query").scrollIntoView({ block: "start", behavior: "auto" });
+    });
+  } else {
+    document.documentElement.style.removeProperty("--search-results-height");
+  }
+}
+
+function closeSearchKeyboard() {
+  clearTimeout(searchBlurTimer);
+  if (document.activeElement === $("f-query")) $("f-query").blur();
+  setSearchMode(false);
 }
 
 async function tmdb(path, signal) {
@@ -640,6 +699,7 @@ function selectManual(title) {
 }
 
 function showSelectedMovie(fromCatalog) {
+  closeSearchKeyboard();
   $("f-query").value = "";
   resetSearchView();
   $("hero-title").textContent = form.title;
@@ -663,6 +723,7 @@ function showSelectedMovie(fromCatalog) {
 }
 
 function clearFilm() {
+  closeSearchKeyboard();
   form.title = ""; form.year = ""; form.tmdbId = null;
   form.poster = ""; form.posterPreview = ""; form.backdrop = ""; form.backdropPreview = "";
   document.body.classList.remove("hero-image-loaded");
@@ -1211,9 +1272,19 @@ GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
 buildSliders();
 
 $("f-query").addEventListener("input", onQueryInput);
+$("f-query").addEventListener("focus", () => setSearchMode(true));
+$("f-query").addEventListener("blur", () => {
+  searchBlurTimer = setTimeout(() => {
+    if (document.activeElement !== $("f-query")) setSearchMode(false);
+  }, 160);
+});
 $("f-query").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && $("f-query").value.trim().length >= 2) selectManual($("f-query").value.trim());
 });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncSearchViewport);
+  window.visualViewport.addEventListener("scroll", syncSearchViewport);
+}
 $("btn-clear").addEventListener("click", clearFilm);
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");

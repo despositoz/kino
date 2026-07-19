@@ -2,11 +2,11 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=iphone-tabs1">
+<link rel="stylesheet" href="style.css?v=phone-search1">
 </head>
 <body>
 
@@ -40,7 +40,7 @@
     <div id="film-search">
       <h2 class="ask">Что смотрел?</h2>
       <p class="ask-sub">Найди или добавь сам</p>
-      <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off">
+      <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off" enterkeyhint="search">
       <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм или нажми «Добавить».</div>
       <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
       <div id="popular" class="hidden">
@@ -194,6 +194,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=iphone-tabs1"></script>
+<script src="app.js?v=phone-search1"></script>
 </body>
 </html>
