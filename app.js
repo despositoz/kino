@@ -217,6 +217,7 @@ let searchLayoutBottom = window.visualViewport
   : window.innerHeight;
 let popularLoaded = false;
 let recommendationsLoaded = false;
+let popularMovies = [];
 let popularAnimationFrame = 0;
 let popularPauseUntil = 0;
 let popularLastFrame = 0;
@@ -231,7 +232,7 @@ let profileReturnTab = "feed";
 let selectedOnboardingGenres = new Set();
 let selectedFrequency = "";
 
-const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
+const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
@@ -520,13 +521,14 @@ async function showTab(name) {
   $("head-feed").classList.toggle("hidden", name !== "feed");
   $("head-diary").classList.toggle("hidden", name !== "diary");
   $("head-profile").classList.toggle("hidden", name !== "profile");
-  $("footer-action").classList.toggle("hidden", name !== "rate");
+  const showRateAction = name === "rate" && (step > 0 || (step === 0 && !!form.title));
+  $("footer-action").classList.toggle("hidden", !showRateAction);
   $("tab-rate").classList.toggle("on", name === "rate");
   $("tab-feed").classList.toggle("on", name === "feed");
   $("tab-diary").classList.toggle("on", name === "diary");
   $("tab-profile").classList.toggle("on", name === "profile");
   document.querySelector(".tabbar").style.setProperty("--tab-index", TAB_INDEX[name]);
-  document.body.classList.toggle("has-action", name === "rate");
+  document.body.classList.toggle("has-action", showRateAction);
   syncAtmosphere();
 
   if (changed) {
@@ -553,8 +555,10 @@ async function showTab(name) {
 
 function syncAtmosphere() {
   const insideFilm = tab === "rate" && !!form.title;
+  const heroMode = insideFilm && step === 0;
   document.body.classList.toggle("immersive", insideFilm);
-  document.body.classList.toggle("hero", insideFilm && step === 0);
+  document.body.classList.toggle("hero", heroMode);
+  document.documentElement.classList.toggle("hero-mode", heroMode);
 }
 function starsVisualRect(container) {
   const stars = [...container.querySelectorAll(".star")];
@@ -570,65 +574,33 @@ function starsVisualRect(container) {
   };
 }
 
-function finishStarsMorph() {
-  if (!activeStarsMorph) return;
-  activeStarsMorph.animation?.cancel();
-  activeStarsMorph.target?.style.removeProperty("visibility");
-  activeStarsMorph.ghost?.remove();
+function moveSharedStars(targetSlot, previousRect = null) {
+  const stars = $("stars-shared");
+  activeStarsMorph?.cancel();
   activeStarsMorph = null;
-}
-
-function prepareStarsMorph(source) {
-  if (!source || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
-  finishStarsMorph();
-  const rect = starsVisualRect(source);
-  const ghost = source.cloneNode(true);
-  ghost.removeAttribute("id");
-  ghost.classList.add("stars-morph-ghost");
-  ghost.setAttribute("aria-hidden", "true");
-  ghost.style.left = `${rect.left}px`;
-  ghost.style.top = `${rect.top}px`;
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.height = `${rect.height}px`;
-  document.body.append(ghost);
-  return { ghost, rect };
-}
-
-function playStarsMorph(prepared, target) {
-  if (!prepared || !target) return;
-  const destination = starsVisualRect(target);
-  const scaleX = destination.width / Math.max(1, prepared.rect.width);
-  const scaleY = destination.height / Math.max(1, prepared.rect.height);
-  target.style.visibility = "hidden";
-  const animation = prepared.ghost.animate([
-    { transform: "translate3d(0,0,0) scale(1)", filter: "blur(0)", opacity: 1 },
-    {
-      transform: `translate3d(${destination.left - prepared.rect.left}px, ${destination.top - prepared.rect.top}px, 0) scale(${scaleX}, ${scaleY})`,
-      filter: "blur(.01px)",
-      opacity: 1,
-    },
+  targetSlot.append(stars);
+  if (!previousRect || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const destination = starsVisualRect(stars);
+  const dx = previousRect.left - destination.left;
+  const dy = previousRect.top - destination.top;
+  const animation = stars.animate([
+    { transform: `translate3d(${dx}px, ${dy}px, 0)`, opacity: 1 },
+    { transform: "translate3d(0, 0, 0)", opacity: 1 },
   ], {
-    duration: 380,
+    duration: 360,
     easing: "cubic-bezier(.22, 1, .36, 1)",
-    fill: "forwards",
   });
-  activeStarsMorph = { ...prepared, target, animation };
+  activeStarsMorph = animation;
   animation.finished.then(() => {
-    if (activeStarsMorph?.animation !== animation) return;
-    target.style.removeProperty("visibility");
-    prepared.ghost.remove();
-    activeStarsMorph = null;
-  }).catch(() => {});
+    if (activeStarsMorph === animation) activeStarsMorph = null;
+  }, () => {});
 }
 
 
 function showStep(n) {
   const previousStep = step;
-  const morph = previousStep === 1 && n === 2
-    ? prepareStarsMorph($("stars-1"))
-    : previousStep === 2 && n === 1
-      ? prepareStarsMorph($("stars-2"))
-      : null;
+  const shouldMoveStars = (previousStep === 1 && n === 2) || (previousStep === 2 && n === 1);
+  const previousStarsRect = shouldMoveStars ? starsVisualRect($("stars-shared")) : null;
   step = n;
   for (let i = 0; i <= 3; i++) $("step-" + i).classList.toggle("hidden", i !== n);
   $("head-title").textContent = editingEntryId && n === 2 ? "Что изменилось?" : STEP_TITLES[n];
@@ -641,39 +613,59 @@ function showStep(n) {
   const primary = $("btn-primary");
   primary.textContent = editingEntryId && n >= 2
     ? "Обновить запись"
-    : n <= 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
+    : n === 0 ? "Оценить фильм" : n === 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
   primary.classList.toggle("muted", n === 0 && !form.title);
   $("btn-save-empty").classList.toggle("hidden", n !== 3);
+  const showRateAction = tab === "rate" && (n > 0 || (n === 0 && !!form.title));
+  $("footer-action").classList.toggle("hidden", !showRateAction);
+  document.body.classList.toggle("has-action", showRateAction);
 
   if (n === 1) {
+    moveSharedStars($("stars-slot-rating"), previousStarsRect);
     $("rating-mode-label").textContent = editingEntryId ? "Меняешь оценку" : "Оцениваешь";
     $("rating-title").textContent = form.title;
     $("rating-meta").textContent = [form.year, form.genre].filter(Boolean).join(" · ");
     const posterWrap = $("rating-poster-wrap");
-    posterWrap.classList.toggle("hidden", !form.poster);
-    if (form.poster) setBlurPicture(
+    const ratingImage = form.backdrop || form.poster;
+    const ratingPreview = form.backdropPreview || form.posterPreview || microPreview(ratingImage, "w300");
+    posterWrap.classList.toggle("hidden", !ratingImage);
+    if (ratingImage) setBlurPicture(
       posterWrap,
       $("rating-poster-preview"),
       $("rating-poster"),
-      form.posterPreview || microPreview(form.poster, "w92"),
-      form.poster,
+      ratingPreview,
+      ratingImage,
     );
     $("rating-film").classList.remove("poster-enter");
     void $("rating-film").offsetWidth;
     $("rating-film").classList.add("poster-enter");
     updateStars("1");
   }
-  if (n === 2) updateStars("2");
+  if (n === 2) {
+    moveSharedStars($("stars-slot-final"), previousStarsRect);
+    updateStars("2");
+  }
   if (n === 3) {
     $("e-prompt").value = manualPrompt();
     $("e-review").value = form.review || "";
   }
-  if (morph) requestAnimationFrame(() =>
-    playStarsMorph(morph, n === 2 ? $("stars-2") : $("stars-1")));
   window.scrollTo(0, 0);
 }
 
 // ─── Шаг 1: выбор фильма ─────────────────────────────────────────
+
+function showSearchSuggestions() {
+  $("popular").classList.add("hidden");
+  $("recommended").classList.add("hidden");
+  $("results").classList.remove("hidden");
+  $("results").setAttribute("aria-busy", popularMovies.length ? "false" : "true");
+  if (popularMovies.length) {
+    renderMovies($("results"), popularMovies, false);
+    $("results").prepend(el("div", "catalog-hint search-hint", "Популярные фильмы"));
+  } else {
+    $("results").innerHTML = '<div class="catalog-state">Загружаю фильмы…</div>';
+  }
+}
 
 function onQueryInput() {
   const q = $("f-query").value.trim();
@@ -682,7 +674,8 @@ function onQueryInput() {
   clearTimeout(searchTimer);
   if (searchController) searchController.abort();
   if (!q) {
-    resetSearchView();
+    if (document.body.classList.contains("search-active")) showSearchSuggestions();
+    else resetSearchView();
     return;
   }
   $("popular").classList.add("hidden");
@@ -731,6 +724,7 @@ function setSearchMode(active) {
   document.body.classList.toggle("search-active", active);
   $("film-search").classList.toggle("search-focused", active);
   if (active) {
+    if (!$("f-query").value.trim()) showSearchSuggestions();
     requestAnimationFrame(() => {
       syncSearchViewport();
       $("f-query").scrollIntoView({ block: "start", behavior: "auto" });
@@ -738,6 +732,9 @@ function setSearchMode(active) {
   } else {
     document.documentElement.style.removeProperty("--search-results-height");
     document.documentElement.style.removeProperty("--keyboard-inset");
+    $("results").classList.add("hidden");
+    $("popular").classList.remove("hidden");
+    $("recommended").classList.toggle("hidden", !recommendationsLoaded);
   }
 }
 
@@ -786,13 +783,13 @@ function movieCard(movie, compact = false) {
 
 function renderMovies(container, movies, popular = false) {
   container.innerHTML = "";
-  movies.slice(0, popular ? 12 : 10).forEach((movie) => container.append(movieCard(movie, popular)));
+  movies.slice(0, popular ? 20 : 10).forEach((movie) => container.append(movieCard(movie, popular)));
 }
 
 function renderRecommendations(container, movies) {
   container.innerHTML = "";
   movies.slice(0, 20).forEach((movie) => {
-    const card = movieCard(movie, false);
+    const card = movieCard(movie, true);
     card.classList.add("recommendation-card");
     container.append(card);
   });
@@ -900,18 +897,10 @@ async function searchMovies(query) {
     renderMovies($("results"), movies);
     if (corrected) $("results").prepend(el("div", "catalog-hint", "Похоже, в названии опечатка — вот ближайшие фильмы"));
     if (!movies.length) $("results").append(el("div", "catalog-state", "Ничего не найдено"));
-    const manual = el("button", "manual-add", `Добавить «${query}» вручную`);
-    manual.type = "button";
-    manual.addEventListener("click", () => selectManual(query));
-    $("results").append(manual);
   } catch (e) {
     if (e.name === "AbortError") return;
     $("results").innerHTML = "";
-    $("results").append(el("div", "catalog-state", "TMDB недоступен — можно добавить вручную"));
-    const manual = el("button", "manual-add", `Добавить «${query}» вручную`);
-    manual.type = "button";
-    manual.addEventListener("click", () => selectManual(query));
-    $("results").append(manual);
+    $("results").append(el("div", "catalog-state", "Каталог сейчас недоступен. Попробуй ещё раз."));
   } finally {
     if (searchController === controller) searchController = null;
     if ($("f-query").value.trim() === query) $("results").setAttribute("aria-busy", "false");
@@ -929,9 +918,12 @@ async function loadPopular() {
       data = await tmdb("/trending/movie/day?page=1");
       localStorage.setItem(TRENDING_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
     }
-    renderPopularMarquee(data.results || []);
+    popularMovies = data.results || [];
+    renderPopularMarquee(popularMovies);
     popularLoaded = true;
     $("popular").classList.toggle("hidden", !!$("f-query").value.trim());
+    if (document.body.classList.contains("search-active") && !$("f-query").value.trim())
+      showSearchSuggestions();
   } catch (e) {
     $("popular").classList.add("hidden");
   }
@@ -985,35 +977,14 @@ async function selectMovie(movie) {
   closeSearchKeyboard();
   const films = await store.getAll();
   const existing = films.find((film) => Number(film.movieId || film.tmdbId) === Number(movie.id));
-  if (existing) {
-    duplicatePendingMovie = movie;
-    duplicatePendingEntry = existing;
-    $("duplicate-dialog").showModal();
-    haptic("impact", "medium");
-    return;
-  }
+  duplicatePendingMovie = existing ? movie : null;
+  duplicatePendingEntry = existing || null;
   editingEntryId = null;
   editingOriginalDate = "";
   applyCatalogMovie(movie);
   syncGenreAccent(form.genre);
-  haptic("impact", "rigid");
+  haptic("impact", existing ? "medium" : "rigid");
   showSelectedMovie(true);
-}
-
-function selectManual(title) {
-  editingEntryId = null;
-  editingOriginalDate = "";
-  form.title = title;
-  form.year = "";
-  form.genre = GENRES[0];
-  form.tmdbId = null;
-  form.poster = "";
-  form.posterPreview = "";
-  form.backdrop = "";
-  form.backdropPreview = "";
-  syncGenreAccent(form.genre);
-  haptic("impact", "rigid");
-  showSelectedMovie(false);
 }
 
 function fillFormFromEntry(film, preserveNotes) {
@@ -1041,16 +1012,21 @@ function fillFormFromEntry(film, preserveNotes) {
   syncGenreAccent(form.genre);
 }
 
-function editExistingEntry(film) {
+function editExistingEntry(film, movie = null) {
+  duplicatePendingMovie = null;
+  duplicatePendingEntry = null;
   editingEntryId = film.entryId || film.id;
   editingOriginalDate = film.date || "";
   fillFormFromEntry(film, true);
+  if (movie) applyCatalogMovie(movie);
   showTab("rate");
   showSelectedMovie(!!form.tmdbId);
   showStep(1);
 }
 
 function rerateExistingEntry(film, movie = null) {
+  duplicatePendingMovie = null;
+  duplicatePendingEntry = null;
   editingEntryId = null;
   editingOriginalDate = "";
   fillFormFromEntry(film, false);
@@ -1086,6 +1062,8 @@ function showSelectedMovie(fromCatalog) {
 
 function clearFilm() {
   closeSearchKeyboard();
+  duplicatePendingMovie = null;
+  duplicatePendingEntry = null;
   editingEntryId = null;
   editingOriginalDate = "";
   form.title = ""; form.year = ""; form.tmdbId = null;
@@ -1155,7 +1133,7 @@ function buildSliders() {
 function updateStars(suffix) {
   const q = calcQuality(form.scores);
   const five = toFive(q);
-  renderStars($("stars-" + suffix), five);
+  renderStars($("stars-shared"), five);
   $("stars-" + suffix + "-num").textContent = five + " из 5";
   let tag = verdict(q) + " · " + q.toFixed(1) + "/10";
   if (Math.abs(q - form.personal) >= 2) tag += " · зашло на " + form.personal;
@@ -1175,6 +1153,11 @@ function primaryAction() {
       form.year = $("f-year").value.trim();
       form.genre = $("f-genre").value;
       syncGenreAccent(form.genre);
+    }
+    if (duplicatePendingEntry) {
+      $("duplicate-dialog").showModal();
+      haptic("impact", "medium");
+      return;
     }
     haptic("impact", "soft");
     showStep(1);
@@ -1645,8 +1628,70 @@ async function renderProfile() {
   $("profile-name").value = profileName(); $("profile-bio").value = profile.bio || ""; $("profile-bio-count").textContent = $("profile-bio").value.length;
   syncProfileAvatar(); await renderProfileFavorites(); window.scrollTo(0, 0);
 }
-async function renderProfileFavorites() { const grid = $("profile-favorites"); grid.innerHTML = ""; const films = await store.getAll(); const selected = new Set(profile.favorites || []); const favoriteFilms = films.filter((film) => selected.has(String(film.entryId || film.id))).slice(0, 4); favoriteFilms.forEach((film) => { const id = String(film.entryId || film.id), button = el("button", "favorite-option"); button.type = "button"; button.dataset.entryId = id; button.classList.add("is-selected"); if (film.poster) button.append(blurPicture(film.posterPreview, film.poster, "favorite-poster", "lazy")); else button.append(el("span", "favorite-poster favorite-placeholder", "🎬")); button.append(el("strong", "", film.title)); button.append(el("i", "favorite-check", "✓")); button.addEventListener("click", openFavoritesPicker); grid.append(button); }); for (let i = favoriteFilms.length; i < 4; i++) { const empty = el("div", "favorite-empty"); empty.append(el("span", "", "+"), el("small", "", "Добавить любимый фильм")); empty.setAttribute("role", "button"); empty.tabIndex = 0; empty.addEventListener("click", openFavoritesPicker); grid.append(empty); } grid.classList.toggle("is-empty", !films.length); }
-async function openFavoritesPicker() { const list = $("favorites-picker-list"); list.innerHTML = ""; const films = await store.getAll(); const selected = new Set(profile.favorites || []); films.forEach((film) => { const id = String(film.entryId || film.id), button = el("button", "favorites-picker-item"); button.type = "button"; button.classList.toggle("is-selected", selected.has(id)); if (film.poster) button.append(blurPicture(film.posterPreview, film.poster, "picker-poster", "lazy")); button.append(el("span", "", film.title), el("i", "", selected.has(id) ? "✓" : "+")); button.addEventListener("click", () => { if (selected.has(id)) selected.delete(id); else if (selected.size < 4) selected.add(id); else { haptic("notification", "warning"); return; } profile.favorites = [...selected]; openFavoritesPicker(); haptic("selection"); }); list.append(button); }); if (!$("favorites-dialog").open) $("favorites-dialog").showModal(); }
+async function renderProfileFavorites() {
+  const grid = $("profile-favorites");
+  grid.innerHTML = "";
+  const films = await store.getAll();
+  const selected = new Set(profile.favorites || []);
+  const favoriteFilms = films.filter((film) => selected.has(String(film.entryId || film.id))).slice(0, 4);
+  favoriteFilms.forEach((film) => {
+    const id = String(film.entryId || film.id);
+    const button = el("button", "favorite-option");
+    button.type = "button";
+    button.dataset.entryId = id;
+    button.classList.add("is-selected");
+    if (film.poster) button.append(blurPicture(film.posterPreview, film.poster, "favorite-poster", "lazy"));
+    else button.append(el("span", "favorite-poster favorite-placeholder", "🎬"));
+    button.append(el("strong", "", film.title));
+    button.append(el("i", "favorite-check", "✓"));
+    button.addEventListener("click", openFavoritesPicker);
+    grid.append(button);
+  });
+  for (let i = favoriteFilms.length; i < 4; i++) {
+    const empty = el("button", "favorite-empty");
+    empty.type = "button";
+    empty.append(el("span", "", "+"), el("small", "", "Добавить любимый фильм"));
+    empty.addEventListener("click", openFavoritesPicker);
+    grid.append(empty);
+  }
+  grid.classList.toggle("is-empty", !films.length);
+}
+
+async function openFavoritesPicker() {
+  const list = $("favorites-picker-list");
+  list.innerHTML = "";
+  const films = await store.getAll();
+  const availableIds = new Set(films.map((film) => String(film.entryId || film.id)));
+  const selected = new Set((profile.favorites || []).map(String).filter((id) => availableIds.has(id)));
+  profile.favorites = [...selected];
+  films.forEach((film) => {
+    const id = String(film.entryId || film.id);
+    const item = el("label", "favorites-picker-item");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected.has(id);
+    checkbox.setAttribute("aria-label", film.title);
+    item.classList.toggle("is-selected", checkbox.checked);
+    item.append(checkbox);
+    if (film.poster) item.append(blurPicture(film.posterPreview, film.poster, "picker-poster", "lazy"));
+    item.append(el("span", "", film.title), el("i", "", checkbox.checked ? "✓" : "+"));
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked && selected.size >= 4) {
+        checkbox.checked = false;
+        haptic("notification", "warning");
+        return;
+      }
+      if (checkbox.checked) selected.add(id);
+      else selected.delete(id);
+      item.classList.toggle("is-selected", checkbox.checked);
+      item.querySelector("i").textContent = checkbox.checked ? "✓" : "+";
+      profile.favorites = [...selected];
+      haptic("selection");
+    });
+    list.append(item);
+  });
+  if (!$("favorites-dialog").open) $("favorites-dialog").showModal();
+}
 async function saveProfileFromForm() { profile = { ...profile, name: $("profile-name").value.trim() || "Киноман", bio: $("profile-bio").value.trim(), favorites: profile.favorites || [] }; await saveProfileData(profile); syncProfileAvatar(); haptic("notification", "success"); const button = $("btn-profile-save"); button.textContent = "Сохранено ✓"; setTimeout(() => { button.textContent = "Сохранить профиль"; }, 1600); }
 function resizeAvatar(file) { return new Promise((resolve, reject) => { const image = new Image(), url = URL.createObjectURL(file); image.onload = () => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 160; const ctx = canvas.getContext("2d"), side = Math.min(image.naturalWidth, image.naturalHeight), sx = (image.naturalWidth - side) / 2, sy = (image.naturalHeight - side) / 2; ctx.drawImage(image, sx, sy, side, side, 0, 0, 160, 160); URL.revokeObjectURL(url); resolve(canvas.toDataURL("image/jpeg", .78)); }; image.onerror = reject; image.src = url; }); }
 const GENRE_ICONS = { "Хоррор": "☾", "Триллер": "⌁", "Драма": "◐", "Фантастика": "✦", "Боевик": "⚡", "Комедия": "☺", "Детектив": "⌕", "Фэнтези": "◇", "Анимация": "✿", "Документальный": "▣", "Другое": "•••" };
@@ -1661,14 +1706,6 @@ buildSliders();
 
 $("f-query").addEventListener("input", onQueryInput);
 $("f-query").addEventListener("focus", () => setSearchMode(true));
-$("f-query").addEventListener("blur", () => {
-  searchBlurTimer = setTimeout(() => {
-    if (document.activeElement !== $("f-query")) setSearchMode(false);
-  }, 160);
-});
-$("f-query").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && $("f-query").value.trim().length >= 2) selectManual($("f-query").value.trim());
-});
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncSearchViewport);
   window.visualViewport.addEventListener("scroll", syncSearchViewport);
@@ -1676,7 +1713,13 @@ if (window.visualViewport) {
 $("btn-clear").addEventListener("click", clearFilm);
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
-  showStep(step - 1);
+  if (step === 1) clearFilm();
+  else showStep(step - 1);
+});
+$("search-scrim").addEventListener("click", () => {
+  $("f-query").value = "";
+  closeSearchKeyboard();
+  resetSearchView();
 });
 $("btn-primary").addEventListener("click", primaryAction);
 $("btn-save-empty").addEventListener("click", () => saveEntry(""));
@@ -1707,10 +1750,10 @@ $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value
 
 ["f-liked", "f-disliked", "f-moment"].forEach((id) => $(id).addEventListener("input", syncFeelingCards));
 document.addEventListener("pointerdown", (event) => { const active = document.activeElement; if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return; if (event.target === active || event.target.closest("label")) return; active.blur(); });
-$("btn-edit-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) editExistingEntry(duplicatePendingEntry); });
+$("btn-edit-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) editExistingEntry(duplicatePendingEntry, duplicatePendingMovie); });
 $("btn-rerate-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) rerateExistingEntry(duplicatePendingEntry, duplicatePendingMovie); });
 $("btn-cancel-duplicate").addEventListener("click", () => $("duplicate-dialog").close());
-$("btn-favorites-done").addEventListener("click", () => { $("favorites-dialog").close(); renderProfileFavorites(); });
+$("btn-favorites-done").addEventListener("click", async () => { await saveProfileData(profile); $("favorites-dialog").close(); await renderProfileFavorites(); });
 $("btn-profile-save").addEventListener("click", saveProfileFromForm);
 $("profile-bio").addEventListener("input", () => { $("profile-bio-count").textContent = $("profile-bio").value.length; });
 $("btn-onboarding-next").addEventListener("click", () => { if (!selectedOnboardingGenres.size) { $("onboarding-genres").classList.add("needs-choice"); haptic("notification", "warning"); return; } $("onboarding-step-1").classList.add("hidden"); $("onboarding-step-2").classList.remove("hidden"); });

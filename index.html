@@ -6,7 +6,7 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=revision2">
+  <link rel="stylesheet" href="style.css?v=revision11">
 </head>
 <body>
 
@@ -41,12 +41,15 @@
 
   <!-- Шаг 1: какой фильм -->
   <section id="step-0">
+    <button id="search-scrim" class="search-scrim" type="button" aria-label="Закрыть поиск"></button>
     <div id="film-search">
       <h2 class="ask">Что смотрел?</h2>
-      <p class="ask-sub">Найди или добавь сам</p>
-      <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off" enterkeyhint="search">
-      <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм или нажми «Добавить».</div>
-      <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
+      <p class="ask-sub">Найди фильм в каталоге</p>
+      <div id="search-shell" class="search-shell">
+        <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off" enterkeyhint="search">
+        <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм.</div>
+        <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
+      </div>
       <div id="popular" class="hidden">
         <div class="sec-label pop-label">Популярное сегодня</div>
         <div id="popular-list"></div>
@@ -92,7 +95,9 @@
     </div>
     <div class="stars-sticky">
       <div class="stars-card">
-        <div id="stars-1" class="stars-row dynamic"></div>
+        <div id="stars-slot-rating" class="stars-slot">
+          <div id="stars-shared" class="stars-row dynamic"></div>
+        </div>
         <div id="stars-1-num" class="stars-num">3.5 из 5</div>
         <div id="stars-1-tag" class="stars-tag">Хорошо</div>
       </div>
@@ -103,7 +108,7 @@
   <!-- Шаг 3: итог и заметки -->
   <section id="step-2" class="hidden">
     <div class="stars-final">
-      <div id="stars-2" class="stars-row big dynamic"></div>
+      <div id="stars-slot-final" class="stars-slot"></div>
       <div id="stars-2-num" class="stars-num hidden"></div>
       <div id="stars-2-tag" class="stars-tag hidden"></div>
     </div>
@@ -233,6 +238,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=revision2"></script>
+<script src="app.js?v=revision11"></script>
 </body>
 </html>
