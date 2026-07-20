@@ -50,9 +50,14 @@ function syncTelegramInsets() {
   );
   const visualTop = Number(window.visualViewport?.offsetTop || 0);
   const measuredInset = Math.max(stableGap, apiInset, visualTop, cssInset);
-  // Старые Telegram WebView не отдают contentSafeAreaInset. В таком клиенте
-  // оставляем место под нативную шапку, но только если измерения действительно нулевые.
-  const safeTop = inTelegram && measuredInset < 20 ? 56 : measuredInset;
+  // Старые/непрогретые клиенты Telegram либо не отдают contentSafeAreaInset,
+  // либо в первые доли секунды после requestFullscreen() отдают значение
+  // ДО перехода в fullscreen (гонка — событие contentSafeAreaChanged может
+  // не успеть прийти к этому вызову). В обоих случаях занижение опасно
+  // (шапка заедет под нативную кнопку «Закрыть»/«…»), поэтому держим
+  // безопасный минимум — высоту нативного ряда кнопок Telegram.
+  const NATIVE_ROW_MIN = 64;
+  const safeTop = inTelegram && measuredInset < 20 ? NATIVE_ROW_MIN : measuredInset;
   const extraInset = Math.max(0, safeTop - cssInset);
   document.documentElement.style.setProperty("--telegram-header-inset", `${extraInset}px`);
   if (stableHeight) document.documentElement.style.setProperty("--stable-viewport-height", `${stableHeight}px`);
@@ -61,8 +66,13 @@ function syncTelegramInsets() {
 syncTelegramInsets();
 window.addEventListener("resize", syncTelegramInsets);
 if (tg?.onEvent) {
-  ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged"].forEach((event) =>
+  ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged"].forEach((event) =>
     tg.onEvent(event, syncTelegramInsets));
+}
+// requestFullscreen() асинхронный: Telegram присылает реальные отступы чуть
+// позже первого кадра. Подстраховываемся повторными измерениями.
+if (inTelegram) {
+  [150, 400, 900].forEach((delay) => setTimeout(syncTelegramInsets, delay));
 }
 
 // ─── Критерии и формулы (один в один из kinodnevnik.jsx) ─────────

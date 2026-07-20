@@ -267,7 +267,7 @@ body.search-active #footer-action {
 }
 .hero-bottom { animation: heroCopyIn var(--motion-hero) var(--ease-out) both; }
 .clear-btn {
-  position: absolute; top: 22px; right: 22px; z-index: 2;
+  position: fixed; top: 22px; right: 22px; z-index: 41;
   width: 44px; height: 44px; border: 0; border-radius: 50%;
   background: rgba(255, 255, 255, .18); color: #fff;
   font-size: 20px; line-height: 1; cursor: pointer;
@@ -827,6 +827,20 @@ body.immersive:not(.hero) #footer-action {
 :root { --telegram-header-inset: 0px; --stable-viewport-height: 100dvh; }
 html, body { background-color: var(--bg); }
 #header { position: relative; padding-top: calc(22px + var(--top-safe) + var(--telegram-header-inset)); }
+/* Ряд нативных кнопок Telegram (Закрыть слева, ⋯ справа) в fullscreen
+   лежит внутри того же отступа, что и padding-top у #header — кладём
+   название аппа в тот же отступ, у его нижнего края (ближе к кнопкам),
+   так оно не пустует и гарантированно не залезает на заголовок ни в
+   Telegram, ни в обычном браузере (там этот отступ просто маленький). */
+#brand-mark {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 40; pointer-events: none;
+  height: calc(22px + var(--top-safe) + var(--telegram-header-inset));
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 14px;
+  font: 800 12px var(--font-display); letter-spacing: .18em;
+  color: var(--sub);
+}
+body.hero #brand-mark, body.immersive #brand-mark { color: rgba(255,255,255,.72); }
 #popular, #recommended { margin-top: 24px; }
 #recommended { margin-top: 20px; }
 .sec-label.pop-label { font: 700 18px/1.15 var(--font-display); letter-spacing: -.02em; }
@@ -1146,25 +1160,31 @@ body.search-active #results .movie-card {
 /* ─── Revision 5: restored film reveal and one shared star group ─── */
 html.hero-mode,
 html.hero-mode body { background: #000; }
+/* Экран выбранного фильма — фиксированный кадр, не список: скролл не нужен
+   и мешает (задник и крестик «плывут» вместе с контентом). */
+html.hero-mode, body.hero { overflow: hidden; height: 100dvh; }
+/* Фото — на всю высоту (cover), без голой полосы виньетки над/под ним,
+   иначе на стыке видна резкая линия. Сверху вообще без затемнения,
+   снизу — лёгкое, плавно нарастающее, без чёрных полей по краям. */
 body.hero::before {
   background-image:
-    linear-gradient(to bottom, #000 0%, rgba(0,0,0,.48) 7%, transparent 18%, transparent 74%, rgba(0,0,0,.52) 89%, #000 100%),
+    linear-gradient(to bottom, transparent 0%, transparent 55%, rgba(0,0,0,.14) 78%, rgba(0,0,0,.4) 100%),
     var(--hero-preview);
   background-position: center;
-  background-size: 100% 100%, auto 82%;
+  background-size: 100% 100%, cover;
   background-repeat: no-repeat;
 }
 body.hero::after {
   background-image:
     radial-gradient(rgba(255,255,255,.015) .55px, transparent .65px),
-    linear-gradient(to bottom, #000 0%, rgba(0,0,0,.48) 7%, transparent 18%, transparent 74%, rgba(0,0,0,.52) 89%, #000 100%),
+    linear-gradient(to bottom, transparent 0%, transparent 55%, rgba(0,0,0,.14) 78%, rgba(0,0,0,.4) 100%),
     var(--hero-image);
   background-position: center;
-  background-size: 4px 4px, 100% 100%, auto 82%;
+  background-size: 4px 4px, 100% 100%, cover;
   background-repeat: repeat, no-repeat, no-repeat;
 }
 body.hero #footer-action {
-  background: linear-gradient(transparent, #000 48%);
+  background: linear-gradient(transparent, rgba(0, 0, 0, .4) 48%);
 }
 .hero-wrap {
   min-height: 300px;
