@@ -175,6 +175,20 @@ const store = {
     if (useCloud) await cloud.remove(k);
     else localStorage.removeItem(k);
   },
+  async clearAll() {
+    let keys = [];
+    if (useCloud) {
+      keys = (await cloud.getKeys()).filter((key) => key.startsWith("film_"));
+      await Promise.all(keys.map((key) => cloud.remove(key)));
+    } else {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("film_")) keys.push(key);
+      }
+      keys.forEach((key) => localStorage.removeItem(key));
+    }
+    return keys.length;
+  },
 };
 
 async function loadProfile() {
@@ -192,6 +206,37 @@ async function saveProfileData(value) {
   const raw = JSON.stringify(value);
   if (useCloud) await cloud.set(PROFILE_KEY, raw);
   else localStorage.setItem(PROFILE_KEY, raw);
+}
+
+async function applyResetRequest() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("reset") !== "1") return null;
+
+  try {
+    const removed = await store.clearAll();
+    const savedProfile = await loadProfile();
+    await saveProfileData({ ...savedProfile, favorites: [] });
+    url.searchParams.delete("reset");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+    return { removed };
+  } catch (error) {
+    return { error };
+  }
+}
+
+function showResetNotice(result) {
+  const failed = !!result?.error;
+  const text = failed
+    ? "Не удалось очистить оценки. Попробуй ещё раз."
+    : result.removed
+      ? `Все оценки удалены · ${result.removed}`
+      : "Оценённых фильмов уже нет";
+  const notice = el("div", `reset-notice${failed ? " is-error" : ""}`, text);
+  notice.setAttribute("role", failed ? "alert" : "status");
+  document.body.append(notice);
+  haptic("notification", failed ? "error" : "success");
+  setTimeout(() => notice.classList.add("is-leaving"), 2400);
+  setTimeout(() => notice.remove(), 2700);
 }
 
 // ─── Состояние ───────────────────────────────────────────────────
@@ -1762,5 +1807,5 @@ $("btn-onboarding-finish").addEventListener("click", () => { if (!selectedFreque
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 
-async function initApp() { profile = await loadProfile(); selectedOnboardingGenres = new Set(profile.genres || []); selectedFrequency = profile.frequency || ""; syncProfileAvatar(); syncFeelingCards(); showStep(0); await showTab("feed"); if (!profile.onboarded) showOnboarding(); }
+async function initApp() { const resetResult = await applyResetRequest(); profile = await loadProfile(); selectedOnboardingGenres = new Set(profile.genres || []); selectedFrequency = profile.frequency || ""; syncProfileAvatar(); syncFeelingCards(); showStep(0); await showTab("feed"); if (!profile.onboarded) showOnboarding(); if (resetResult) showResetNotice(resetResult); }
 initApp();
