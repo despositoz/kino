@@ -6,7 +6,7 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=backdrops-original1">
+<link rel="stylesheet" href="style.css?v=revision2">
 </head>
 <body>
 
@@ -30,6 +30,10 @@
     <div class="head-title">Дневник</div>
     <div class="head-sub">твоя история кино</div>
   </div>
+  <div id="head-profile" class="hidden">
+    <div class="head-title">Профиль</div>
+    <div class="head-sub">твоё кино-пространство</div>
+  </div>
 </header>
 
 <!-- ─── Вкладка «Оценить»: 4 шага ─── -->
@@ -44,8 +48,12 @@
       <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм или нажми «Добавить».</div>
       <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
       <div id="popular" class="hidden">
-        <div class="sec-label pop-label">Популярное сейчас</div>
+        <div class="sec-label pop-label">Популярное сегодня</div>
         <div id="popular-list"></div>
+      </div>
+      <div id="recommended" class="hidden">
+        <div class="sec-label pop-label">Возможно, ты смотрел</div>
+        <div id="recommended-list"></div>
       </div>
     </div>
 
@@ -71,20 +79,20 @@
 
   <!-- Шаг 2: оценки -->
   <section id="step-1" class="hidden">
-    <div class="rating-film">
+    <div id="rating-film" class="rating-film">
       <span id="rating-poster-wrap" class="rating-poster-media blur-up-media hidden">
         <img id="rating-poster-preview" class="blur-up-preview" alt="" aria-hidden="true">
         <img id="rating-poster" class="blur-up-full" alt="" aria-hidden="true">
       </span>
       <div>
-        <span>Оцениваешь</span>
+        <span id="rating-mode-label">Оцениваешь</span>
         <h2 id="rating-title"></h2>
         <p id="rating-meta"></p>
       </div>
     </div>
     <div class="stars-sticky">
       <div class="stars-card">
-        <div id="stars-1" class="stars-row"></div>
+        <div id="stars-1" class="stars-row dynamic"></div>
         <div id="stars-1-num" class="stars-num">3.5 из 5</div>
         <div id="stars-1-tag" class="stars-tag">Хорошо</div>
       </div>
@@ -95,9 +103,9 @@
   <!-- Шаг 3: итог и заметки -->
   <section id="step-2" class="hidden">
     <div class="stars-final">
-      <div id="stars-2" class="stars-row big"></div>
-      <div id="stars-2-num" class="stars-num"></div>
-      <div id="stars-2-tag" class="stars-tag"></div>
+      <div id="stars-2" class="stars-row big dynamic"></div>
+      <div id="stars-2-num" class="stars-num hidden"></div>
+      <div id="stars-2-tag" class="stars-tag hidden"></div>
     </div>
     <div class="note-block feeling-card liked-card">
       <div class="feeling-head"><span>♥</span><div class="sec-label">Что зацепило?</div></div>
@@ -143,11 +151,11 @@
   <div id="diary-feature" class="diary-feature hidden"></div>
 
   <div id="stats" class="hidden">
-    <div class="diary-heading"><span>Твоя история</span><h2>Кино в цифрах</h2></div>
+    <div class="diary-heading"><span>Твоя история</span><h2 id="diary-praise">Кино в цифрах</h2></div>
     <div class="tiles">
-      <div class="tile"><div id="st-total" class="tile-num">0</div><div class="tile-sub">фильмов</div></div>
-      <div class="tile"><div id="st-avg" class="tile-num gold">—</div><div class="tile-sub">средняя оценка</div></div>
-      <div class="tile"><div id="st-genre" class="tile-num teal small">—</div><div class="tile-sub">любимый жанр</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM4 8l3-4h4L8 8m3 0 3-4h4l-3 4"/></svg><div id="st-total" class="tile-num">0</div><div class="tile-sub">фильмов</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg><div id="st-avg" class="tile-num gold">—</div><div class="tile-sub">средняя оценка</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h9l7 7-8 8-8-8zm5 4h.01"/></svg><div id="st-genre" class="tile-num teal small">—</div><div class="tile-sub">любимый жанр</div></div>
     </div>
 
     <div class="diary-card">
@@ -174,6 +182,34 @@
   </details>
 </main>
 
+<!-- ─── Профиль пользователя ─── -->
+<main id="screen-profile" class="app-screen hidden">
+  <section class="profile-card">
+    <div class="profile-avatar-button" aria-label="Фото профиля Telegram">
+      <img id="profile-avatar-image" class="hidden" alt="Фото профиля">
+      <span id="profile-avatar-fallback">К</span>
+    </div>
+    <label class="profile-field">Имя<input id="profile-name" maxlength="40" autocomplete="name"></label>
+    <label class="profile-field">О себе<textarea id="profile-bio" maxlength="160" rows="3" placeholder="Пара слов о твоём вкусе"></textarea><small><span id="profile-bio-count">0</span>/160</small></label>
+  </section>
+  <section class="favorites-section">
+    <div class="diary-heading"><span>Твоя полка</span><h2>Любимые фильмы</h2></div>
+    <p class="profile-help">Выбери до четырёх фильмов из дневника.</p>
+    <div id="profile-favorites" class="favorites-grid"></div>
+  </section>
+  <button id="btn-profile-save" class="primary">Сохранить профиль</button>
+</main>
+
+<div id="onboarding" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  <div class="onboarding-card">
+    <div id="onboarding-step-1"><span class="eyebrow">Настроим ленту</span><h2 id="onboarding-title">Что тебе нравится смотреть?</h2><p>Можно выбрать несколько жанров.</p><div id="onboarding-genres" class="genre-chips"></div><button id="btn-onboarding-next" class="primary" type="button">Далее</button></div>
+    <div id="onboarding-step-2" class="hidden"><span class="eyebrow">Последний вопрос</span><h2>Как часто ты смотришь кино?</h2><div id="onboarding-frequency" class="frequency-list"><button type="button" data-frequency="daily">Почти каждый день</button><button type="button" data-frequency="often">Пару раз в неделю</button><button type="button" data-frequency="sometimes">Иногда</button><button type="button" data-frequency="rarely">Редко</button></div><button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button></div>
+  </div>
+</div>
+
+<dialog id="duplicate-dialog" class="duplicate-dialog"><div class="dialog-mark">↺</div><h2>Ты уже оценивал этот фильм.</h2><p>Хочешь отредактировать оценку или оценить заново?</p><div class="dialog-actions"><button id="btn-edit-existing" class="primary" type="button">Редактировать</button><button id="btn-rerate-existing" class="secondary" type="button">Оценить заново</button><button id="btn-cancel-duplicate" class="linkbtn" type="button">Отмена</button></div></dialog>
+<dialog id="favorites-dialog" class="duplicate-dialog favorites-dialog"><h2>Выбери любимые фильмы</h2><p>До четырёх из твоего дневника.</p><div id="favorites-picker-list" class="favorites-picker-list"></div><button id="btn-favorites-done" class="primary" type="button">Готово</button></dialog>
+
 <!-- ─── Низ: главная кнопка шага + вкладки ─── -->
 <footer id="footer">
   <div id="footer-action" class="hidden">
@@ -191,9 +227,12 @@
     <button id="tab-diary" class="tabbtn">
       <span class="ic-chart"><i></i><i></i><i></i></span>Дневник
     </button>
+    <button id="tab-profile" class="tabbtn">
+      <span class="ic-profile"><i></i><i></i></span>Профиль
+    </button>
   </nav>
 </footer>
 
-<script src="app.js?v=pre-crop-layout1"></script>
+<script src="app.js?v=revision2"></script>
 </body>
 </html>

@@ -38,6 +38,33 @@ if (tg) {
   }
 }
 
+function syncTelegramInsets() {
+  const stableHeight = Number(tg?.viewportStableHeight || 0);
+  const layoutHeight = window.innerHeight;
+  const stableGap = stableHeight ? Math.max(0, layoutHeight - stableHeight) : 0;
+  const apiInset = Number(tg?.contentSafeAreaInset?.top || tg?.safeAreaInset?.top || 0);
+  const styles = getComputedStyle(document.documentElement);
+  const cssInset = Math.max(
+    parseFloat(styles.getPropertyValue("--tg-content-safe-area-inset-top")) || 0,
+    parseFloat(styles.getPropertyValue("--tg-safe-area-inset-top")) || 0,
+  );
+  const visualTop = Number(window.visualViewport?.offsetTop || 0);
+  const measuredInset = Math.max(stableGap, apiInset, visualTop, cssInset);
+  // Старые Telegram WebView не отдают contentSafeAreaInset. В таком клиенте
+  // оставляем место под нативную шапку, но только если измерения действительно нулевые.
+  const safeTop = inTelegram && measuredInset < 20 ? 56 : measuredInset;
+  const extraInset = Math.max(0, safeTop - cssInset);
+  document.documentElement.style.setProperty("--telegram-header-inset", `${extraInset}px`);
+  if (stableHeight) document.documentElement.style.setProperty("--stable-viewport-height", `${stableHeight}px`);
+}
+
+syncTelegramInsets();
+window.addEventListener("resize", syncTelegramInsets);
+if (tg?.onEvent) {
+  ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged"].forEach((event) =>
+    tg.onEvent(event, syncTelegramInsets));
+}
+
 // ─── Критерии и формулы (один в один из kinodnevnik.jsx) ─────────
 
 const CRITERIA = [
@@ -69,6 +96,10 @@ const TMDB_GENRES = {
   28: "Боевик", 35: "Комедия", 9648: "Детектив", 14: "Фэнтези",
   16: "Анимация", 99: "Документальный",
 };
+const TMDB_GENRE_IDS = Object.fromEntries(Object.entries(TMDB_GENRES).map(([id, name]) => [name, id]));
+const PROFILE_KEY = "kino_profile_v1";
+const TRENDING_CACHE_KEY = "tmdb_trending_day_v1";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const verdict = (s) => {
   if (s >= 9) return "Почти шедевр";
@@ -125,12 +156,17 @@ const store = {
     }
     const films = [];
     for (const r of raw) {
-      try { films.push(withDirectTmdbImages(JSON.parse(r))); } catch (e) { /* битую запись пропускаем */ }
+      try {
+        const saved = withDirectTmdbImages(JSON.parse(r));
+        const entryId = saved.entryId || saved.id;
+        films.push({ ...saved, id: entryId, entryId, movieId: saved.movieId || saved.tmdbId || null });
+      } catch (e) { /* битую запись пропускаем */ }
     }
-    return films.sort((a, b) => b.id - a.id); // новые сверху
+    return films.sort((a, b) => b.entryId - a.entryId); // новые сверху
   },
   async save(film) {
-    const k = "film_" + film.id, v = JSON.stringify(film);
+    const entryId = film.entryId || film.id;
+    const k = "film_" + entryId, v = JSON.stringify({ ...film, id: entryId, entryId });
     if (useCloud) await cloud.set(k, v);
     else localStorage.setItem(k, v);
   },
@@ -141,6 +177,23 @@ const store = {
   },
 };
 
+async function loadProfile() {
+  let raw = "";
+  try {
+    if (useCloud) raw = (await cloud.getItems([PROFILE_KEY]))[PROFILE_KEY] || "";
+    else raw = localStorage.getItem(PROFILE_KEY) || "";
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function saveProfileData(value) {
+  const raw = JSON.stringify(value);
+  if (useCloud) await cloud.set(PROFILE_KEY, raw);
+  else localStorage.setItem(PROFILE_KEY, raw);
+}
+
 // ─── Состояние ───────────────────────────────────────────────────
 
 const emptyForm = () => ({
@@ -149,6 +202,7 @@ const emptyForm = () => ({
   scores: { plot: 5, chars: 5, visual: 5, sound: 5, emotion: 5 },
   personal: 5,
   liked: "", disliked: "", moment: "",
+  review: "",
 });
 
 let form = emptyForm();
@@ -162,9 +216,23 @@ let searchLayoutBottom = window.visualViewport
   ? window.visualViewport.offsetTop + window.visualViewport.height
   : window.innerHeight;
 let popularLoaded = false;
+let recommendationsLoaded = false;
+let popularAnimationFrame = 0;
+let popularPauseUntil = 0;
+let popularLastFrame = 0;
+let popularPosition = 0;
+let activeStarsMorph = null;
+let editingEntryId = null;
+let editingOriginalDate = "";
+let duplicatePendingMovie = null;
+let duplicatePendingEntry = null;
+let profile = {};
+let profileReturnTab = "feed";
+let selectedOnboardingGenres = new Set();
+let selectedFrequency = "";
 
 const STEP_TITLES = ["Фильм", "Оценки", "Ну как?", "Запись"];
-const TAB_INDEX = { rate: 0, feed: 1, diary: 2 };
+const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
 
@@ -398,18 +466,25 @@ function renderStars(container, five) {
     const v = five - i;
     const pct = v >= 1 ? 100 : v >= 0.5 ? 50 : 0;
     container.children[i].querySelector(".fill").style.width = pct + "%";
+    container.children[i].classList.toggle("has-fill", pct > 0);
   }
 
-  // Вся группа реагирует на итоговую оценку одинаково: чем она выше,
-  // тем звёзды крупнее и ярче. Значения ниже 1 остаются на минимуме 0.9.
-  const strength = Math.max(0, Math.min(1, (five - 1) / 4));
-  const scale = 0.9 + strength * 0.25;
-  const red = Math.round(201 + (245 - 201) * strength);
-  const green = Math.round(168 + (185 - 168) * strength);
-  const blue = Math.round(118 + (66 - 118) * strength);
-  container.style.setProperty("--stars-scale", scale.toFixed(3));
+  const strength = Math.max(0, Math.min(1, (five - 0.5) / 4.5));
+  const red = Math.round(107 + (245 - 107) * strength);
+  const green = Math.round(101 + (185 - 101) * strength);
+  const blue = Math.round(94 + (66 - 94) * strength);
+  const dynamicStars = container.classList.contains("dynamic");
+  if (dynamicStars) {
+    const available = Math.min(window.innerWidth, 560) * 0.9;
+    const gap = 2 + strength * 10;
+    const maxSize = Math.min(68, (available - gap * 4) / 5);
+    const size = 24 + (maxSize - 24) * strength;
+    container.style.setProperty("--star-size", `${size.toFixed(1)}px`);
+    container.style.setProperty("--star-gap", `${gap.toFixed(1)}px`);
+  }
   container.style.setProperty("--stars-color", `rgb(${red}, ${green}, ${blue})`);
   container.classList.toggle("is-perfect", five === 5);
+  container.classList.toggle("is-high", five >= 4.5);
   container.dataset.rating = String(five);
 }
 
@@ -440,13 +515,16 @@ async function showTab(name) {
   $("screen-rate").classList.toggle("hidden", name !== "rate");
   $("screen-feed").classList.toggle("hidden", name !== "feed");
   $("screen-diary").classList.toggle("hidden", name !== "diary");
+  $("screen-profile").classList.toggle("hidden", name !== "profile");
   $("head-rate").classList.toggle("hidden", name !== "rate");
   $("head-feed").classList.toggle("hidden", name !== "feed");
   $("head-diary").classList.toggle("hidden", name !== "diary");
+  $("head-profile").classList.toggle("hidden", name !== "profile");
   $("footer-action").classList.toggle("hidden", name !== "rate");
   $("tab-rate").classList.toggle("on", name === "rate");
   $("tab-feed").classList.toggle("on", name === "feed");
   $("tab-diary").classList.toggle("on", name === "diary");
+  $("tab-profile").classList.toggle("on", name === "profile");
   document.querySelector(".tabbar").style.setProperty("--tab-index", TAB_INDEX[name]);
   document.body.classList.toggle("has-action", name === "rate");
   syncAtmosphere();
@@ -464,9 +542,13 @@ async function showTab(name) {
     nextScreen.addEventListener("animationend", finishTabMotion);
   }
 
-  if (name === "rate" && !popularLoaded) loadPopular();
+  if (name === "rate") {
+    if (!popularLoaded) loadPopular();
+    if (!recommendationsLoaded) loadRecommendations();
+  }
   if (name === "feed") return renderFeed();
   if (name === "diary") return renderDiary();
+  if (name === "profile") return renderProfile();
 }
 
 function syncAtmosphere() {
@@ -474,11 +556,82 @@ function syncAtmosphere() {
   document.body.classList.toggle("immersive", insideFilm);
   document.body.classList.toggle("hero", insideFilm && step === 0);
 }
+function starsVisualRect(container) {
+  const stars = [...container.querySelectorAll(".star")];
+  if (!stars.length) return container.getBoundingClientRect();
+  const first = stars[0].getBoundingClientRect();
+  const last = stars[stars.length - 1].getBoundingClientRect();
+  return {
+    left: first.left,
+    top: Math.min(...stars.map((star) => star.getBoundingClientRect().top)),
+    width: last.right - first.left,
+    height: Math.max(...stars.map((star) => star.getBoundingClientRect().bottom)) -
+      Math.min(...stars.map((star) => star.getBoundingClientRect().top)),
+  };
+}
+
+function finishStarsMorph() {
+  if (!activeStarsMorph) return;
+  activeStarsMorph.animation?.cancel();
+  activeStarsMorph.target?.style.removeProperty("visibility");
+  activeStarsMorph.ghost?.remove();
+  activeStarsMorph = null;
+}
+
+function prepareStarsMorph(source) {
+  if (!source || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
+  finishStarsMorph();
+  const rect = starsVisualRect(source);
+  const ghost = source.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.classList.add("stars-morph-ghost");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  document.body.append(ghost);
+  return { ghost, rect };
+}
+
+function playStarsMorph(prepared, target) {
+  if (!prepared || !target) return;
+  const destination = starsVisualRect(target);
+  const scaleX = destination.width / Math.max(1, prepared.rect.width);
+  const scaleY = destination.height / Math.max(1, prepared.rect.height);
+  target.style.visibility = "hidden";
+  const animation = prepared.ghost.animate([
+    { transform: "translate3d(0,0,0) scale(1)", filter: "blur(0)", opacity: 1 },
+    {
+      transform: `translate3d(${destination.left - prepared.rect.left}px, ${destination.top - prepared.rect.top}px, 0) scale(${scaleX}, ${scaleY})`,
+      filter: "blur(.01px)",
+      opacity: 1,
+    },
+  ], {
+    duration: 380,
+    easing: "cubic-bezier(.22, 1, .36, 1)",
+    fill: "forwards",
+  });
+  activeStarsMorph = { ...prepared, target, animation };
+  animation.finished.then(() => {
+    if (activeStarsMorph?.animation !== animation) return;
+    target.style.removeProperty("visibility");
+    prepared.ghost.remove();
+    activeStarsMorph = null;
+  }).catch(() => {});
+}
+
 
 function showStep(n) {
+  const previousStep = step;
+  const morph = previousStep === 1 && n === 2
+    ? prepareStarsMorph($("stars-1"))
+    : previousStep === 2 && n === 1
+      ? prepareStarsMorph($("stars-2"))
+      : null;
   step = n;
   for (let i = 0; i <= 3; i++) $("step-" + i).classList.toggle("hidden", i !== n);
-  $("head-title").textContent = STEP_TITLES[n];
+  $("head-title").textContent = editingEntryId && n === 2 ? "Что изменилось?" : STEP_TITLES[n];
   $("head-sub").textContent = `Шаг ${n + 1} из 4`;
   const segs = $("progress").children;
   for (let i = 0; i < segs.length; i++) segs[i].classList.toggle("on", i <= n);
@@ -486,12 +639,14 @@ function showStep(n) {
   syncAtmosphere();
 
   const primary = $("btn-primary");
-  primary.textContent =
-    n <= 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
+  primary.textContent = editingEntryId && n >= 2
+    ? "Обновить запись"
+    : n <= 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
   primary.classList.toggle("muted", n === 0 && !form.title);
   $("btn-save-empty").classList.toggle("hidden", n !== 3);
 
   if (n === 1) {
+    $("rating-mode-label").textContent = editingEntryId ? "Меняешь оценку" : "Оцениваешь";
     $("rating-title").textContent = form.title;
     $("rating-meta").textContent = [form.year, form.genre].filter(Boolean).join(" · ");
     const posterWrap = $("rating-poster-wrap");
@@ -503,10 +658,18 @@ function showStep(n) {
       form.posterPreview || microPreview(form.poster, "w92"),
       form.poster,
     );
+    $("rating-film").classList.remove("poster-enter");
+    void $("rating-film").offsetWidth;
+    $("rating-film").classList.add("poster-enter");
     updateStars("1");
   }
   if (n === 2) updateStars("2");
-  if (n === 3) $("e-prompt").value = manualPrompt();
+  if (n === 3) {
+    $("e-prompt").value = manualPrompt();
+    $("e-review").value = form.review || "";
+  }
+  if (morph) requestAnimationFrame(() =>
+    playStarsMorph(morph, n === 2 ? $("stars-2") : $("stars-1")));
   window.scrollTo(0, 0);
 }
 
@@ -523,6 +686,7 @@ function onQueryInput() {
     return;
   }
   $("popular").classList.add("hidden");
+  $("recommended").classList.add("hidden");
   $("results").classList.remove("hidden");
   if (q.length < 2) {
     $("results").setAttribute("aria-busy", "false");
@@ -543,6 +707,7 @@ function resetSearchView() {
   $("results").classList.add("hidden");
   $("results").setAttribute("aria-busy", "false");
   $("popular").classList.remove("hidden");
+  $("recommended").classList.toggle("hidden", !recommendationsLoaded);
 }
 
 function syncSearchViewport() {
@@ -621,7 +786,72 @@ function movieCard(movie, compact = false) {
 
 function renderMovies(container, movies, popular = false) {
   container.innerHTML = "";
-  movies.slice(0, popular ? 8 : 6).forEach((movie) => container.append(movieCard(movie, popular)));
+  movies.slice(0, popular ? 12 : 10).forEach((movie) => container.append(movieCard(movie, popular)));
+}
+
+function renderRecommendations(container, movies) {
+  container.innerHTML = "";
+  movies.slice(0, 20).forEach((movie) => {
+    const card = movieCard(movie, false);
+    card.classList.add("recommendation-card");
+    container.append(card);
+  });
+}
+
+function normalizePopularPosition(container) {
+  const segment = Number(container.dataset.segmentWidth || 0);
+  if (!segment) return;
+  if (popularPosition < segment * .5) popularPosition += segment;
+  else if (popularPosition >= segment * 1.5) popularPosition -= segment;
+  container.scrollLeft = popularPosition;
+}
+
+function pausePopularMarquee(duration = 8000) {
+  popularPauseUntil = performance.now() + duration;
+}
+
+function startPopularMarquee() {
+  cancelAnimationFrame(popularAnimationFrame);
+  popularLastFrame = 0;
+  const container = $("popular-list");
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const tick = (time) => {
+    const delta = popularLastFrame ? Math.min(34, time - popularLastFrame) : 0;
+    popularLastFrame = time;
+    if (time < popularPauseUntil) popularPosition = container.scrollLeft;
+    normalizePopularPosition(container);
+    if (time >= popularPauseUntil && !document.hidden && !$("popular").classList.contains("hidden"))
+      popularPosition += delta * .018;
+    popularAnimationFrame = requestAnimationFrame(tick);
+  };
+  popularAnimationFrame = requestAnimationFrame(tick);
+}
+
+function renderPopularMarquee(movies) {
+  const container = $("popular-list");
+  container.innerHTML = "";
+  const selection = movies.slice(0, 12);
+  for (let copy = 0; copy < 3; copy++) {
+    selection.forEach((movie) => {
+      const card = movieCard(movie, true);
+      card.dataset.marqueeCopy = String(copy);
+      if (copy !== 1) card.tabIndex = -1;
+      container.append(card);
+    });
+  }
+  if (!container.dataset.motionBound) {
+    ["pointerdown", "touchstart", "wheel"].forEach((event) =>
+      container.addEventListener(event, () => pausePopularMarquee(), { passive: true }));
+    container.dataset.motionBound = "true";
+  }
+  requestAnimationFrame(() => {
+    const segment = container.children[selection.length]?.offsetLeft - container.children[0]?.offsetLeft;
+    if (!segment) return;
+    container.dataset.segmentWidth = String(segment);
+    popularPosition = segment;
+    container.scrollLeft = segment;
+    startPopularMarquee();
+  });
 }
 
 function normalizeTitle(text) {
@@ -690,8 +920,16 @@ async function searchMovies(query) {
 
 async function loadPopular() {
   try {
-    const data = await tmdb("/movie/popular?page=1");
-    renderMovies($("popular-list"), data.results || [], true);
+    let data = null;
+    try {
+      const cached = JSON.parse(localStorage.getItem(TRENDING_CACHE_KEY) || "null");
+      if (cached && Date.now() - cached.savedAt < DAY_MS) data = cached.data;
+    } catch (_) { /* cache miss */ }
+    if (!data) {
+      data = await tmdb("/trending/movie/day?page=1");
+      localStorage.setItem(TRENDING_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+    }
+    renderPopularMarquee(data.results || []);
     popularLoaded = true;
     $("popular").classList.toggle("hidden", !!$("f-query").value.trim());
   } catch (e) {
@@ -699,7 +937,36 @@ async function loadPopular() {
   }
 }
 
-function selectMovie(movie) {
+async function loadRecommendations() {
+  try {
+    const films = await store.getAll();
+    const genreScores = new Map();
+    films.forEach((film) => {
+      const weight = Math.max(1, Number(film.quality || 5));
+      genreScores.set(film.genre, (genreScores.get(film.genre) || 0) + weight);
+    });
+    (profile.genres || []).forEach((genre) => genreScores.set(genre, (genreScores.get(genre) || 0) + 6));
+    const genres = [...genreScores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([genre]) => TMDB_GENRE_IDS[genre])
+      .filter(Boolean)
+      .slice(0, 3);
+    if (!genres.length) {
+      $("recommended").classList.add("hidden");
+      return;
+    }
+    const data = await tmdb(`/discover/movie?sort_by=popularity.desc&vote_count.gte=150&with_genres=${genres.join("|")}`);
+    const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
+    const choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
+    renderRecommendations($("recommended-list"), choices);
+    recommendationsLoaded = choices.length > 0;
+    $("recommended").classList.toggle("hidden", !recommendationsLoaded || !!$("f-query").value.trim());
+  } catch (_) {
+    $("recommended").classList.add("hidden");
+  }
+}
+
+function applyCatalogMovie(movie) {
   form.title = movie.title;
   form.year = yearOf(movie);
   form.genre = genreOf(movie);
@@ -712,12 +979,30 @@ function selectMovie(movie) {
   form.backdropPreview = movie.backdrop_path
     ? tmdbBackdrop(movie.backdrop_path, "w300")
     : form.posterPreview;
+}
+
+async function selectMovie(movie) {
+  closeSearchKeyboard();
+  const films = await store.getAll();
+  const existing = films.find((film) => Number(film.movieId || film.tmdbId) === Number(movie.id));
+  if (existing) {
+    duplicatePendingMovie = movie;
+    duplicatePendingEntry = existing;
+    $("duplicate-dialog").showModal();
+    haptic("impact", "medium");
+    return;
+  }
+  editingEntryId = null;
+  editingOriginalDate = "";
+  applyCatalogMovie(movie);
   syncGenreAccent(form.genre);
   haptic("impact", "rigid");
   showSelectedMovie(true);
 }
 
 function selectManual(title) {
+  editingEntryId = null;
+  editingOriginalDate = "";
   form.title = title;
   form.year = "";
   form.genre = GENRES[0];
@@ -729,6 +1014,50 @@ function selectManual(title) {
   syncGenreAccent(form.genre);
   haptic("impact", "rigid");
   showSelectedMovie(false);
+}
+
+function fillFormFromEntry(film, preserveNotes) {
+  const fresh = emptyForm();
+  form = {
+    ...fresh,
+    title: film.title, year: film.year || "", genre: film.genre || GENRES[0],
+    tmdbId: film.movieId || film.tmdbId || null,
+    poster: film.poster || "", posterPreview: film.posterPreview || "",
+    backdrop: film.backdrop || "", backdropPreview: film.backdropPreview || "",
+    scores: preserveNotes ? { ...fresh.scores, ...(film.scores || {}) } : { ...fresh.scores },
+    personal: preserveNotes ? Number(film.personal || 5) : fresh.personal,
+    liked: preserveNotes ? film.liked || "" : "",
+    disliked: preserveNotes ? film.disliked || "" : "",
+    moment: preserveNotes ? film.moment || "" : "",
+    review: preserveNotes ? film.review || "" : "",
+  };
+  $("f-liked").value = form.liked;
+  $("f-disliked").value = form.disliked;
+  $("f-moment").value = form.moment;
+  $("e-review").value = form.review;
+  syncFeelingCards();
+  $("sliders").innerHTML = "";
+  buildSliders();
+  syncGenreAccent(form.genre);
+}
+
+function editExistingEntry(film) {
+  editingEntryId = film.entryId || film.id;
+  editingOriginalDate = film.date || "";
+  fillFormFromEntry(film, true);
+  showTab("rate");
+  showSelectedMovie(!!form.tmdbId);
+  showStep(1);
+}
+
+function rerateExistingEntry(film, movie = null) {
+  editingEntryId = null;
+  editingOriginalDate = "";
+  fillFormFromEntry(film, false);
+  if (movie) applyCatalogMovie(movie);
+  showTab("rate");
+  showSelectedMovie(!!form.tmdbId);
+  showStep(1);
 }
 
 function showSelectedMovie(fromCatalog) {
@@ -757,6 +1086,8 @@ function showSelectedMovie(fromCatalog) {
 
 function clearFilm() {
   closeSearchKeyboard();
+  editingEntryId = null;
+  editingOriginalDate = "";
   form.title = ""; form.year = ""; form.tmdbId = null;
   form.poster = ""; form.posterPreview = ""; form.backdrop = ""; form.backdropPreview = "";
   document.body.classList.remove("hero-image-loaded");
@@ -869,10 +1200,11 @@ function primaryAction() {
 }
 
 async function saveEntry(review) {
+  const entryId = editingEntryId || Date.now();
   const film = {
-    id: Date.now(),
+    id: entryId, entryId,
     title: form.title, year: form.year, genre: form.genre,
-    tmdbId: form.tmdbId,
+    tmdbId: form.tmdbId, movieId: form.tmdbId,
     poster: form.poster, posterPreview: form.posterPreview,
     backdrop: form.backdrop, backdropPreview: form.backdropPreview,
     scores: { ...form.scores },
@@ -880,7 +1212,7 @@ async function saveEntry(review) {
     personal: form.personal,
     liked: form.liked, disliked: form.disliked, moment: form.moment,
     review,
-    date: new Date().toLocaleDateString("ru-RU"),
+    date: editingOriginalDate || new Date().toLocaleDateString("ru-RU"),
   };
   try {
     await store.save(film);
@@ -894,8 +1226,11 @@ async function saveEntry(review) {
 
   // сброс формы и переход в дневник
   form = emptyForm();
+  editingEntryId = null;
+  editingOriginalDate = "";
   $("f-query").value = ""; $("f-year").value = ""; $("f-genre").value = GENRES[0];
   $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
+  syncFeelingCards();
   $("e-review").value = "";
   $("sliders").innerHTML = "";
   buildSliders();
@@ -911,7 +1246,6 @@ async function saveEntry(review) {
 
 // ─── Лента: персональные инсайты из дневника ─────────────────────
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const GENRE_IN_SENTENCE = {
   "Хоррор": "хоррор", "Триллер": "триллер", "Драма": "драму",
   "Фантастика": "фантастику", "Боевик": "боевик", "Комедия": "комедию",
@@ -1105,24 +1439,7 @@ async function openDiaryFilm(film) {
 }
 
 function startReevaluation(film) {
-  const fresh = emptyForm();
-  form = {
-    ...fresh,
-    title: film.title, year: film.year || "", genre: film.genre || GENRES[0],
-    tmdbId: film.tmdbId || null,
-    poster: film.poster || "", posterPreview: film.posterPreview || "",
-    backdrop: film.backdrop || "", backdropPreview: film.backdropPreview || "",
-    scores: { ...fresh.scores, ...(film.scores || {}) },
-    personal: Number(film.personal || 5),
-  };
-  $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
-  $("e-review").value = "";
-  $("sliders").innerHTML = "";
-  buildSliders();
-  syncGenreAccent(form.genre);
-  showTab("rate");
-  showSelectedMovie(!!film.tmdbId);
-  showStep(1);
+  rerateExistingEntry(film);
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -1155,9 +1472,6 @@ async function renderFeed() {
     return;
   }
 
-  const intro = el("div", "feed-intro");
-  intro.append(el("p", "", `На основе ${films.length} ${filmsWord(films.length)} в твоём дневнике`));
-  list.append(intro);
   feedInsights(films).forEach((insight, index) => list.append(feedCard(insight, index)));
 }
 
@@ -1211,6 +1525,13 @@ function renderDiaryFeature(film) {
 function renderStats(films) {
   // плашки: сколько фильмов, средняя оценка (по 5-балльной), любимый жанр
   $("st-total").textContent = films.length;
+  $("diary-praise").textContent = films.length <= 4
+    ? "Начало положено!"
+    : films.length <= 14
+      ? `Ты оценил ${films.length} ${filmsWord(films.length)}. Отличная работа, критик!`
+      : films.length <= 29
+        ? `${films.length} ${filmsWord(films.length)} в дневнике — уже целая коллекция`
+        : `${films.length} ${filmsWord(films.length)}. Ты знаешь толк в кино`;
   const avg = films.reduce((s, f) => s + toFive(f.quality), 0) / films.length;
   $("st-avg").textContent = (Math.round(avg * 10) / 10).toFixed(1);
 
@@ -1301,6 +1622,38 @@ function filmItem(f) {
   return item;
 }
 
+// ─── Поля итогов, профиль и первый запуск ───────────────────────
+
+function syncFeelingCards() {
+  document.querySelectorAll(".feeling-card").forEach((card) => {
+    const textarea = card.querySelector("textarea");
+    card.classList.toggle("has-value", !!textarea.value.trim());
+  });
+}
+
+function telegramUser() { return tg?.initDataUnsafe?.user || {}; }
+function profileName() { const user = telegramUser(); return profile.name || [user.first_name, user.last_name].filter(Boolean).join(" ") || "Киноман"; }
+function profileAvatar() { return telegramUser().photo_url || ""; }
+function syncProfileAvatar() {
+  const name = profileName(), initial = name.trim().charAt(0).toUpperCase() || "К", avatar = profileAvatar();
+  $("profile-avatar-fallback").textContent = initial;
+  $("profile-avatar-image").classList.toggle("hidden", !avatar);
+  if (avatar) $("profile-avatar-image").src = avatar;
+  else $("profile-avatar-image").removeAttribute("src");
+}
+async function renderProfile() {
+  $("profile-name").value = profileName(); $("profile-bio").value = profile.bio || ""; $("profile-bio-count").textContent = $("profile-bio").value.length;
+  syncProfileAvatar(); await renderProfileFavorites(); window.scrollTo(0, 0);
+}
+async function renderProfileFavorites() { const grid = $("profile-favorites"); grid.innerHTML = ""; const films = await store.getAll(); const selected = new Set(profile.favorites || []); const favoriteFilms = films.filter((film) => selected.has(String(film.entryId || film.id))).slice(0, 4); favoriteFilms.forEach((film) => { const id = String(film.entryId || film.id), button = el("button", "favorite-option"); button.type = "button"; button.dataset.entryId = id; button.classList.add("is-selected"); if (film.poster) button.append(blurPicture(film.posterPreview, film.poster, "favorite-poster", "lazy")); else button.append(el("span", "favorite-poster favorite-placeholder", "🎬")); button.append(el("strong", "", film.title)); button.append(el("i", "favorite-check", "✓")); button.addEventListener("click", openFavoritesPicker); grid.append(button); }); for (let i = favoriteFilms.length; i < 4; i++) { const empty = el("div", "favorite-empty"); empty.append(el("span", "", "+"), el("small", "", "Добавить любимый фильм")); empty.setAttribute("role", "button"); empty.tabIndex = 0; empty.addEventListener("click", openFavoritesPicker); grid.append(empty); } grid.classList.toggle("is-empty", !films.length); }
+async function openFavoritesPicker() { const list = $("favorites-picker-list"); list.innerHTML = ""; const films = await store.getAll(); const selected = new Set(profile.favorites || []); films.forEach((film) => { const id = String(film.entryId || film.id), button = el("button", "favorites-picker-item"); button.type = "button"; button.classList.toggle("is-selected", selected.has(id)); if (film.poster) button.append(blurPicture(film.posterPreview, film.poster, "picker-poster", "lazy")); button.append(el("span", "", film.title), el("i", "", selected.has(id) ? "✓" : "+")); button.addEventListener("click", () => { if (selected.has(id)) selected.delete(id); else if (selected.size < 4) selected.add(id); else { haptic("notification", "warning"); return; } profile.favorites = [...selected]; openFavoritesPicker(); haptic("selection"); }); list.append(button); }); if (!$("favorites-dialog").open) $("favorites-dialog").showModal(); }
+async function saveProfileFromForm() { profile = { ...profile, name: $("profile-name").value.trim() || "Киноман", bio: $("profile-bio").value.trim(), favorites: profile.favorites || [] }; await saveProfileData(profile); syncProfileAvatar(); haptic("notification", "success"); const button = $("btn-profile-save"); button.textContent = "Сохранено ✓"; setTimeout(() => { button.textContent = "Сохранить профиль"; }, 1600); }
+function resizeAvatar(file) { return new Promise((resolve, reject) => { const image = new Image(), url = URL.createObjectURL(file); image.onload = () => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 160; const ctx = canvas.getContext("2d"), side = Math.min(image.naturalWidth, image.naturalHeight), sx = (image.naturalWidth - side) / 2, sy = (image.naturalHeight - side) / 2; ctx.drawImage(image, sx, sy, side, side, 0, 0, 160, 160); URL.revokeObjectURL(url); resolve(canvas.toDataURL("image/jpeg", .78)); }; image.onerror = reject; image.src = url; }); }
+const GENRE_ICONS = { "Хоррор": "☾", "Триллер": "⌁", "Драма": "◐", "Фантастика": "✦", "Боевик": "⚡", "Комедия": "☺", "Детектив": "⌕", "Фэнтези": "◇", "Анимация": "✿", "Документальный": "▣", "Другое": "•••" };
+function buildOnboarding() { const box = $("onboarding-genres"); box.innerHTML = ""; GENRES.filter((genre) => genre !== "Другое").forEach((genre) => { const chip = el("button", "genre-chip", `${GENRE_ICONS[genre]} ${genre}`); chip.type = "button"; chip.addEventListener("click", () => { if (selectedOnboardingGenres.has(genre)) selectedOnboardingGenres.delete(genre); else selectedOnboardingGenres.add(genre); chip.classList.toggle("is-selected", selectedOnboardingGenres.has(genre)); haptic("selection"); }); box.append(chip); }); }
+function showOnboarding() { buildOnboarding(); $("onboarding-step-1").classList.remove("hidden"); $("onboarding-step-2").classList.add("hidden"); $("onboarding").classList.remove("hidden"); document.body.classList.add("modal-open"); }
+async function finishOnboarding() { profile = { ...profile, onboarded: true, genres: [...selectedOnboardingGenres], frequency: selectedFrequency, name: profileName() }; await saveProfileData(profile); $("onboarding").classList.add("hidden"); document.body.classList.remove("modal-open"); syncProfileAvatar(); recommendationsLoaded = false; loadRecommendations(); haptic("notification", "success"); }
+
 // ─── Запуск ──────────────────────────────────────────────────────
 
 GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
@@ -1346,9 +1699,25 @@ $("tab-diary").addEventListener("click", () => {
   if (tab !== "diary") haptic("selection");
   showTab("diary");
 });
+$("tab-profile").addEventListener("click", () => {
+  if (tab !== "profile") haptic("selection");
+  showTab("profile");
+});
 $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
+
+["f-liked", "f-disliked", "f-moment"].forEach((id) => $(id).addEventListener("input", syncFeelingCards));
+document.addEventListener("pointerdown", (event) => { const active = document.activeElement; if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return; if (event.target === active || event.target.closest("label")) return; active.blur(); });
+$("btn-edit-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) editExistingEntry(duplicatePendingEntry); });
+$("btn-rerate-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) rerateExistingEntry(duplicatePendingEntry, duplicatePendingMovie); });
+$("btn-cancel-duplicate").addEventListener("click", () => $("duplicate-dialog").close());
+$("btn-favorites-done").addEventListener("click", () => { $("favorites-dialog").close(); renderProfileFavorites(); });
+$("btn-profile-save").addEventListener("click", saveProfileFromForm);
+$("profile-bio").addEventListener("input", () => { $("profile-bio-count").textContent = $("profile-bio").value.length; });
+$("btn-onboarding-next").addEventListener("click", () => { if (!selectedOnboardingGenres.size) { $("onboarding-genres").classList.add("needs-choice"); haptic("notification", "warning"); return; } $("onboarding-step-1").classList.add("hidden"); $("onboarding-step-2").classList.remove("hidden"); });
+document.querySelectorAll("#onboarding-frequency button").forEach((button) => button.addEventListener("click", () => { selectedFrequency = button.dataset.frequency; document.querySelectorAll("#onboarding-frequency button").forEach((item) => item.classList.toggle("is-selected", item === button)); haptic("selection"); }));
+$("btn-onboarding-finish").addEventListener("click", () => { if (!selectedFrequency) { $("onboarding-frequency").classList.add("needs-choice"); haptic("notification", "warning"); return; } finishOnboarding(); });
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 
-showStep(0);
-showTab("feed");
+async function initApp() { profile = await loadProfile(); selectedOnboardingGenres = new Set(profile.genres || []); selectedFrequency = profile.frequency || ""; syncProfileAvatar(); syncFeelingCards(); showStep(0); await showTab("feed"); if (!profile.onboarded) showOnboarding(); }
+initApp();
