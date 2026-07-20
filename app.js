@@ -1659,20 +1659,41 @@ function syncFeelingCards() {
   });
 }
 
-function telegramUser() { return tg?.initDataUnsafe?.user || {}; }
-function profileName() { const user = telegramUser(); return profile.name || [user.first_name, user.last_name].filter(Boolean).join(" ") || "Киноман"; }
-function profileAvatar() { return telegramUser().photo_url || ""; }
+function telegramUser() {
+  return tg?.initDataUnsafe?.user || {};
+}
+
+function profileName() {
+  const user = telegramUser();
+  return profile.name || [user.first_name, user.last_name].filter(Boolean).join(" ") || "Киноман";
+}
+
+function profileAvatar() {
+  return telegramUser().photo_url || "";
+}
+
 function syncProfileAvatar() {
-  const name = profileName(), initial = name.trim().charAt(0).toUpperCase() || "К", avatar = profileAvatar();
+  const name = profileName();
+  const initial = name.trim().charAt(0).toUpperCase() || "К";
+  const avatar = profileAvatar();
   $("profile-avatar-fallback").textContent = initial;
   $("profile-avatar-image").classList.toggle("hidden", !avatar);
-  if (avatar) $("profile-avatar-image").src = avatar;
-  else $("profile-avatar-image").removeAttribute("src");
+  if (avatar) {
+    $("profile-avatar-image").src = avatar;
+  } else {
+    $("profile-avatar-image").removeAttribute("src");
+  }
 }
+
 async function renderProfile() {
-  $("profile-name").value = profileName(); $("profile-bio").value = profile.bio || ""; $("profile-bio-count").textContent = $("profile-bio").value.length;
-  syncProfileAvatar(); await renderProfileFavorites(); window.scrollTo(0, 0);
+  $("profile-name").value = profileName();
+  $("profile-bio").value = profile.bio || "";
+  $("profile-bio-count").textContent = $("profile-bio").value.length;
+  syncProfileAvatar();
+  await renderProfileFavorites();
+  window.scrollTo(0, 0);
 }
+
 async function renderProfileFavorites() {
   const grid = $("profile-favorites");
   grid.innerHTML = "";
@@ -1737,12 +1758,88 @@ async function openFavoritesPicker() {
   });
   if (!$("favorites-dialog").open) $("favorites-dialog").showModal();
 }
-async function saveProfileFromForm() { profile = { ...profile, name: $("profile-name").value.trim() || "Киноман", bio: $("profile-bio").value.trim(), favorites: profile.favorites || [] }; await saveProfileData(profile); syncProfileAvatar(); haptic("notification", "success"); const button = $("btn-profile-save"); button.textContent = "Сохранено ✓"; setTimeout(() => { button.textContent = "Сохранить профиль"; }, 1600); }
-function resizeAvatar(file) { return new Promise((resolve, reject) => { const image = new Image(), url = URL.createObjectURL(file); image.onload = () => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 160; const ctx = canvas.getContext("2d"), side = Math.min(image.naturalWidth, image.naturalHeight), sx = (image.naturalWidth - side) / 2, sy = (image.naturalHeight - side) / 2; ctx.drawImage(image, sx, sy, side, side, 0, 0, 160, 160); URL.revokeObjectURL(url); resolve(canvas.toDataURL("image/jpeg", .78)); }; image.onerror = reject; image.src = url; }); }
-const GENRE_ICONS = { "Хоррор": "☾", "Триллер": "⌁", "Драма": "◐", "Фантастика": "✦", "Боевик": "⚡", "Комедия": "☺", "Детектив": "⌕", "Фэнтези": "◇", "Анимация": "✿", "Документальный": "▣", "Другое": "•••" };
-function buildOnboarding() { const box = $("onboarding-genres"); box.innerHTML = ""; GENRES.filter((genre) => genre !== "Другое").forEach((genre) => { const chip = el("button", "genre-chip", `${GENRE_ICONS[genre]} ${genre}`); chip.type = "button"; chip.addEventListener("click", () => { if (selectedOnboardingGenres.has(genre)) selectedOnboardingGenres.delete(genre); else selectedOnboardingGenres.add(genre); chip.classList.toggle("is-selected", selectedOnboardingGenres.has(genre)); haptic("selection"); }); box.append(chip); }); }
-function showOnboarding() { buildOnboarding(); $("onboarding-step-1").classList.remove("hidden"); $("onboarding-step-2").classList.add("hidden"); $("onboarding").classList.remove("hidden"); document.body.classList.add("modal-open"); }
-async function finishOnboarding() { profile = { ...profile, onboarded: true, genres: [...selectedOnboardingGenres], frequency: selectedFrequency, name: profileName() }; await saveProfileData(profile); $("onboarding").classList.add("hidden"); document.body.classList.remove("modal-open"); syncProfileAvatar(); recommendationsLoaded = false; loadRecommendations(); haptic("notification", "success"); }
+
+async function saveProfileFromForm() {
+  profile = {
+    ...profile,
+    name: $("profile-name").value.trim() || "Киноман",
+    bio: $("profile-bio").value.trim(),
+    favorites: profile.favorites || [],
+  };
+  await saveProfileData(profile);
+  syncProfileAvatar();
+  haptic("notification", "success");
+  const button = $("btn-profile-save");
+  button.textContent = "Сохранено ✓";
+  setTimeout(() => { button.textContent = "Сохранить профиль"; }, 1600);
+}
+
+function resizeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 160;
+      const ctx = canvas.getContext("2d");
+      const side = Math.min(image.naturalWidth, image.naturalHeight);
+      const sx = (image.naturalWidth - side) / 2;
+      const sy = (image.naturalHeight - side) / 2;
+      ctx.drawImage(image, sx, sy, side, side, 0, 0, 160, 160);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.78));
+    };
+    image.onerror = reject;
+    image.src = url;
+  });
+}
+
+const GENRE_ICONS = {
+  "Хоррор": "☾", "Триллер": "⌁", "Драма": "◐", "Фантастика": "✦",
+  "Боевик": "⚡", "Комедия": "☺", "Детектив": "⌕", "Фэнтези": "◇",
+  "Анимация": "✿", "Документальный": "▣", "Другое": "•••",
+};
+
+function buildOnboarding() {
+  const box = $("onboarding-genres");
+  box.innerHTML = "";
+  GENRES.filter((genre) => genre !== "Другое").forEach((genre) => {
+    const chip = el("button", "genre-chip", `${GENRE_ICONS[genre]} ${genre}`);
+    chip.type = "button";
+    chip.addEventListener("click", () => {
+      if (selectedOnboardingGenres.has(genre)) selectedOnboardingGenres.delete(genre);
+      else selectedOnboardingGenres.add(genre);
+      chip.classList.toggle("is-selected", selectedOnboardingGenres.has(genre));
+      haptic("selection");
+    });
+    box.append(chip);
+  });
+}
+
+function showOnboarding() {
+  buildOnboarding();
+  $("onboarding-step-1").classList.remove("hidden");
+  $("onboarding-step-2").classList.add("hidden");
+  $("onboarding").classList.remove("hidden");
+  document.body.classList.add("modal-open");
+}
+
+async function finishOnboarding() {
+  profile = {
+    ...profile,
+    onboarded: true,
+    genres: [...selectedOnboardingGenres],
+    frequency: selectedFrequency,
+    name: profileName(),
+  };
+  await saveProfileData(profile);
+  $("onboarding").classList.add("hidden");
+  document.body.classList.remove("modal-open");
+  syncProfileAvatar();
+  recommendationsLoaded = false;
+  loadRecommendations();
+  haptic("notification", "success");
+}
 
 // ─── Запуск ──────────────────────────────────────────────────────
 
@@ -1793,19 +1890,74 @@ $("tab-profile").addEventListener("click", () => {
 });
 $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
 
-["f-liked", "f-disliked", "f-moment"].forEach((id) => $(id).addEventListener("input", syncFeelingCards));
-document.addEventListener("pointerdown", (event) => { const active = document.activeElement; if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return; if (event.target === active || event.target.closest("label")) return; active.blur(); });
-$("btn-edit-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) editExistingEntry(duplicatePendingEntry, duplicatePendingMovie); });
-$("btn-rerate-existing").addEventListener("click", () => { $("duplicate-dialog").close(); if (duplicatePendingEntry) rerateExistingEntry(duplicatePendingEntry, duplicatePendingMovie); });
+["f-liked", "f-disliked", "f-moment"].forEach((id) => {
+  $(id).addEventListener("input", syncFeelingCards);
+});
+document.addEventListener("pointerdown", (event) => {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return;
+  if (event.target === active || event.target.closest("label")) return;
+  active.blur();
+});
+
+$("btn-edit-existing").addEventListener("click", () => {
+  $("duplicate-dialog").close();
+  if (duplicatePendingEntry) editExistingEntry(duplicatePendingEntry, duplicatePendingMovie);
+});
+$("btn-rerate-existing").addEventListener("click", () => {
+  $("duplicate-dialog").close();
+  if (duplicatePendingEntry) rerateExistingEntry(duplicatePendingEntry, duplicatePendingMovie);
+});
 $("btn-cancel-duplicate").addEventListener("click", () => $("duplicate-dialog").close());
-$("btn-favorites-done").addEventListener("click", async () => { await saveProfileData(profile); $("favorites-dialog").close(); await renderProfileFavorites(); });
+$("btn-favorites-done").addEventListener("click", async () => {
+  await saveProfileData(profile);
+  $("favorites-dialog").close();
+  await renderProfileFavorites();
+});
+
 $("btn-profile-save").addEventListener("click", saveProfileFromForm);
-$("profile-bio").addEventListener("input", () => { $("profile-bio-count").textContent = $("profile-bio").value.length; });
-$("btn-onboarding-next").addEventListener("click", () => { if (!selectedOnboardingGenres.size) { $("onboarding-genres").classList.add("needs-choice"); haptic("notification", "warning"); return; } $("onboarding-step-1").classList.add("hidden"); $("onboarding-step-2").classList.remove("hidden"); });
-document.querySelectorAll("#onboarding-frequency button").forEach((button) => button.addEventListener("click", () => { selectedFrequency = button.dataset.frequency; document.querySelectorAll("#onboarding-frequency button").forEach((item) => item.classList.toggle("is-selected", item === button)); haptic("selection"); }));
-$("btn-onboarding-finish").addEventListener("click", () => { if (!selectedFrequency) { $("onboarding-frequency").classList.add("needs-choice"); haptic("notification", "warning"); return; } finishOnboarding(); });
+$("profile-bio").addEventListener("input", () => {
+  $("profile-bio-count").textContent = $("profile-bio").value.length;
+});
+$("btn-onboarding-next").addEventListener("click", () => {
+  if (!selectedOnboardingGenres.size) {
+    $("onboarding-genres").classList.add("needs-choice");
+    haptic("notification", "warning");
+    return;
+  }
+  $("onboarding-step-1").classList.add("hidden");
+  $("onboarding-step-2").classList.remove("hidden");
+});
+document.querySelectorAll("#onboarding-frequency button").forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedFrequency = button.dataset.frequency;
+    document.querySelectorAll("#onboarding-frequency button").forEach((item) =>
+      item.classList.toggle("is-selected", item === button));
+    haptic("selection");
+  });
+});
+$("btn-onboarding-finish").addEventListener("click", () => {
+  if (!selectedFrequency) {
+    $("onboarding-frequency").classList.add("needs-choice");
+    haptic("notification", "warning");
+    return;
+  }
+  finishOnboarding();
+});
 
 if (!inTelegram) $("storage-note").classList.remove("hidden");
 
-async function initApp() { const resetResult = await applyResetRequest(); profile = await loadProfile(); selectedOnboardingGenres = new Set(profile.genres || []); selectedFrequency = profile.frequency || ""; syncProfileAvatar(); syncFeelingCards(); showStep(0); await showTab("feed"); if (!profile.onboarded) showOnboarding(); if (resetResult) showResetNotice(resetResult); }
+async function initApp() {
+  const resetResult = await applyResetRequest();
+  profile = await loadProfile();
+  selectedOnboardingGenres = new Set(profile.genres || []);
+  selectedFrequency = profile.frequency || "";
+  syncProfileAvatar();
+  syncFeelingCards();
+  showStep(0);
+  await showTab("feed");
+  if (!profile.onboarded) showOnboarding();
+  if (resetResult) showResetNotice(resetResult);
+}
+
 initApp();

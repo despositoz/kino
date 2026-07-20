@@ -205,15 +205,47 @@
   <button id="btn-profile-save" class="primary">Сохранить профиль</button>
 </main>
 
+<!-- ─── Первый запуск ─── -->
 <div id="onboarding" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
   <div class="onboarding-card">
-    <div id="onboarding-step-1"><span class="eyebrow">Настроим ленту</span><h2 id="onboarding-title">Что тебе нравится смотреть?</h2><p>Можно выбрать несколько жанров.</p><div id="onboarding-genres" class="genre-chips"></div><button id="btn-onboarding-next" class="primary" type="button">Далее</button></div>
-    <div id="onboarding-step-2" class="hidden"><span class="eyebrow">Последний вопрос</span><h2>Как часто ты смотришь кино?</h2><div id="onboarding-frequency" class="frequency-list"><button type="button" data-frequency="daily">Почти каждый день</button><button type="button" data-frequency="often">Пару раз в неделю</button><button type="button" data-frequency="sometimes">Иногда</button><button type="button" data-frequency="rarely">Редко</button></div><button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button></div>
+    <div id="onboarding-step-1">
+      <span class="eyebrow">Настроим ленту</span>
+      <h2 id="onboarding-title">Что тебе нравится смотреть?</h2>
+      <p>Можно выбрать несколько жанров.</p>
+      <div id="onboarding-genres" class="genre-chips"></div>
+      <button id="btn-onboarding-next" class="primary" type="button">Далее</button>
+    </div>
+    <div id="onboarding-step-2" class="hidden">
+      <span class="eyebrow">Последний вопрос</span>
+      <h2>Как часто ты смотришь кино?</h2>
+      <div id="onboarding-frequency" class="frequency-list">
+        <button type="button" data-frequency="daily">Почти каждый день</button>
+        <button type="button" data-frequency="often">Пару раз в неделю</button>
+        <button type="button" data-frequency="sometimes">Иногда</button>
+        <button type="button" data-frequency="rarely">Редко</button>
+      </div>
+      <button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button>
+    </div>
   </div>
 </div>
 
-<dialog id="duplicate-dialog" class="duplicate-dialog"><div class="dialog-mark">↺</div><h2>Ты уже оценивал этот фильм.</h2><p>Хочешь отредактировать оценку или оценить заново?</p><div class="dialog-actions"><button id="btn-edit-existing" class="primary" type="button">Редактировать</button><button id="btn-rerate-existing" class="secondary" type="button">Оценить заново</button><button id="btn-cancel-duplicate" class="linkbtn" type="button">Отмена</button></div></dialog>
-<dialog id="favorites-dialog" class="duplicate-dialog favorites-dialog"><h2>Выбери любимые фильмы</h2><p>До четырёх из твоего дневника.</p><div id="favorites-picker-list" class="favorites-picker-list"></div><button id="btn-favorites-done" class="primary" type="button">Готово</button></dialog>
+<!-- ─── Повторный выбор уже оценённого фильма ─── -->
+<dialog id="duplicate-dialog" class="duplicate-dialog">
+  <div class="dialog-mark">↺</div>
+  <h2>Ты уже оценивал этот фильм.</h2>
+  <p>Хочешь отредактировать оценку или оценить заново?</p>
+  <div class="dialog-actions">
+    <button id="btn-edit-existing" class="primary" type="button">Редактировать</button>
+    <button id="btn-rerate-existing" class="secondary" type="button">Оценить заново</button>
+    <button id="btn-cancel-duplicate" class="linkbtn" type="button">Отмена</button>
+  </div>
+</dialog>
+<dialog id="favorites-dialog" class="duplicate-dialog favorites-dialog">
+  <h2>Выбери любимые фильмы</h2>
+  <p>До четырёх из твоего дневника.</p>
+  <div id="favorites-picker-list" class="favorites-picker-list"></div>
+  <button id="btn-favorites-done" class="primary" type="button">Готово</button>
+</dialog>
 
 <!-- ─── Низ: главная кнопка шага + вкладки ─── -->
 <footer id="footer">
