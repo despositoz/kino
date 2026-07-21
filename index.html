@@ -6,13 +6,16 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=ui13">
+  <link rel="stylesheet" href="style.css?v=ui15">
 </head>
 <body>
 
 <!-- Название приложения в зоне нативных кнопок Telegram (Закрыть / ⋯) —
      видно на всех вкладках, не перекрывает их: сидит между кнопками. -->
 <div id="brand-mark" aria-hidden="true">SYO</div>
+<div id="pull-refresh" class="pull-refresh" aria-hidden="true">
+  <span class="pull-refresh-icon"></span>
+</div>
 
 <!-- ─── Шапка: заголовок шага и прогресс (вкладка «Оценить») ─── -->
 <header id="header">
@@ -285,6 +288,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui13"></script>
+<script src="app.js?v=ui15"></script>
 </body>
 </html>

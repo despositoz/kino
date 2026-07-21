@@ -11,6 +11,11 @@ const tg = window.Telegram ? window.Telegram.WebApp : null;
 const inTelegram = !!(tg && tg.initData);
 let fullscreenUnavailable = false;
 
+function lockTelegramVerticalSwipes() {
+  if (!tg || typeof tg.disableVerticalSwipes !== "function") return;
+  try { tg.disableVerticalSwipes(); } catch (_) { /* старый клиент */ }
+}
+
 function requestAppFullscreen() {
   if (!tg) return;
 
@@ -28,12 +33,15 @@ function requestAppFullscreen() {
 
 if (tg) {
   tg.ready();
+  lockTelegramVerticalSwipes();
   requestAppFullscreen();
+  lockTelegramVerticalSwipes();
 
   if (typeof tg.onEvent === "function" && tg.isVersionAtLeast("8.0")) {
     tg.onEvent("fullscreenFailed", (event) => {
       if (!event || event.error !== "ALREADY_FULLSCREEN") fullscreenUnavailable = true;
       tg.expand();
+      lockTelegramVerticalSwipes();
     });
   }
 }
@@ -60,13 +68,23 @@ syncTelegramInsets();
 window.addEventListener("resize", syncTelegramInsets);
 if (tg?.onEvent) {
   ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged"].forEach((event) =>
-    tg.onEvent(event, syncTelegramInsets));
+    tg.onEvent(event, () => {
+      syncTelegramInsets();
+      lockTelegramVerticalSwipes();
+    }));
 }
 // requestFullscreen() асинхронный: Telegram присылает реальные отступы чуть
 // позже первого кадра. Подстраховываемся повторными измерениями.
 if (inTelegram) {
-  [150, 400, 900].forEach((delay) => setTimeout(syncTelegramInsets, delay));
+  [0, 100, 250, 500, 900, 1600].forEach((delay) => setTimeout(() => {
+    syncTelegramInsets();
+    lockTelegramVerticalSwipes();
+  }, delay));
 }
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) lockTelegramVerticalSwipes();
+});
+window.addEventListener("pageshow", lockTelegramVerticalSwipes);
 
 // ─── Критерии и формулы (один в один из kinodnevnik.jsx) ─────────
 
@@ -564,9 +582,7 @@ function ratingThresholdHaptic(previousFive, nextFive) {
 // ─── Переключение вкладок и шагов ────────────────────────────────
 
 function syncTelegramSwipeBehavior(insideRating) {
-  if (!tg || !tg.isVersionAtLeast?.("7.7")) return;
-  const method = insideRating ? "disableVerticalSwipes" : "enableVerticalSwipes";
-  try { tg[method]?.(); } catch (_) { /* старый клиент */ }
+  lockTelegramVerticalSwipes();
 }
 
 async function showTab(name) {
@@ -1981,6 +1997,119 @@ async function finishOnboarding() {
 }
 
 // ─── Запуск ──────────────────────────────────────────────────────
+const PULL_REFRESH_THRESHOLD = 62;
+let pullStartY = 0;
+let pullCurrent = 0;
+let pullTracking = false;
+let pullRefreshing = false;
+let pullMouseTracking = false;
+let touchGuardStartY = 0;
+
+function rubberbandPull(distance) {
+  const dimension = Math.max(480, window.innerHeight);
+  const constant = .46;
+  return (distance * dimension * constant) / (dimension + constant * Math.abs(distance));
+}
+
+function canStartPull(target) {
+  if (pullRefreshing || tab === "rate" || window.scrollY > 0) return false;
+  if (document.body.classList.contains("modal-open") || document.body.classList.contains("search-active")) return false;
+  return !target.closest("input, textarea, select, dialog, .overlay");
+}
+
+function setPullDistance(distance) {
+  pullCurrent = Math.max(0, distance);
+  document.body.style.setProperty("--pull-distance", `${pullCurrent.toFixed(2)}px`);
+  document.body.classList.toggle("pull-active", pullCurrent > 0);
+  document.body.classList.toggle("pull-armed", pullCurrent >= PULL_REFRESH_THRESHOLD);
+}
+
+function beginPull(clientY, target) {
+  if (!canStartPull(target)) return;
+  pullStartY = clientY;
+  pullTracking = true;
+  document.body.classList.remove("pull-settling");
+}
+
+function movePull(clientY) {
+  if (!pullTracking) return false;
+  const delta = clientY - pullStartY;
+  if (delta <= 0) {
+    setPullDistance(0);
+    return false;
+  }
+  setPullDistance(rubberbandPull(delta));
+  return pullCurrent > 3;
+}
+
+async function refreshVisibleTab() {
+  if (tab === "feed") await renderFeed();
+  else if (tab === "diary") await renderDiary();
+  else if (tab === "profile") {
+    syncProfileAvatar();
+    await renderProfileFavorites();
+  }
+}
+
+async function finishPull() {
+  if (!pullTracking) return;
+  pullTracking = false;
+  const shouldRefresh = pullCurrent >= PULL_REFRESH_THRESHOLD;
+  if (!shouldRefresh) {
+    document.body.classList.add("pull-settling");
+    setPullDistance(0);
+    setTimeout(() => document.body.classList.remove("pull-settling"), 420);
+    return;
+  }
+
+  pullRefreshing = true;
+  document.body.classList.remove("pull-armed");
+  document.body.classList.add("pull-refreshing", "pull-settling");
+  setPullDistance(52);
+  haptic("impact", "medium");
+  try {
+    await refreshVisibleTab();
+    haptic("notification", "success");
+  } finally {
+    pullRefreshing = false;
+    setPullDistance(0);
+    setTimeout(() => {
+      document.body.classList.remove("pull-refreshing", "pull-settling", "pull-active", "pull-armed");
+    }, 420);
+  }
+}
+
+document.addEventListener("touchstart", (event) => {
+  if (event.touches.length !== 1) return;
+  touchGuardStartY = event.touches[0].clientY;
+  beginPull(event.touches[0].clientY, event.target);
+}, { passive: true });
+document.addEventListener("touchmove", (event) => {
+  if (event.touches.length !== 1) return;
+  const clientY = event.touches[0].clientY;
+  const innerScroller = event.target.closest("#results, .overlay, dialog");
+  const innerCanMove = innerScroller && innerScroller.scrollTop > 0;
+  const blocksTelegramCollapse = window.scrollY <= 0 && clientY - touchGuardStartY > 4 && !innerCanMove;
+  if (movePull(clientY) || blocksTelegramCollapse) event.preventDefault();
+}, { passive: false });
+document.addEventListener("touchend", finishPull, { passive: true });
+document.addEventListener("touchcancel", finishPull, { passive: true });
+
+document.addEventListener("mousedown", (event) => {
+  if (event.button !== 0) return;
+  pullMouseTracking = true;
+  beginPull(event.clientY, event.target);
+});
+document.addEventListener("mousemove", (event) => {
+  if (!pullMouseTracking) return;
+  if (movePull(event.clientY)) event.preventDefault();
+});
+document.addEventListener("mouseup", () => {
+  if (!pullMouseTracking) return;
+  pullMouseTracking = false;
+  finishPull();
+});
+
 
 GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
 buildSliders();
