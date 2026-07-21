@@ -50,15 +50,8 @@ function syncTelegramInsets() {
   );
   const visualTop = Number(window.visualViewport?.offsetTop || 0);
   const measuredInset = Math.max(stableGap, apiInset, visualTop, cssInset);
-  // Старые/непрогретые клиенты Telegram либо не отдают contentSafeAreaInset,
-  // либо в первые доли секунды после requestFullscreen() отдают значение
-  // ДО перехода в fullscreen (гонка — событие contentSafeAreaChanged может
-  // не успеть прийти к этому вызову). В обоих случаях занижение опасно
-  // (шапка заедет под нативную кнопку «Закрыть»/«…»), поэтому держим
-  // безопасный минимум — высоту нативного ряда кнопок Telegram.
-  const NATIVE_ROW_MIN = 64;
-  const safeTop = inTelegram && measuredInset < 20 ? NATIVE_ROW_MIN : measuredInset;
-  const extraInset = Math.max(0, safeTop - cssInset);
+  // Telegram и CSS сами сообщают safe area; не подгоняем отступ под модель iPhone.
+  const extraInset = Math.max(0, measuredInset - cssInset);
   document.documentElement.style.setProperty("--telegram-header-inset", `${extraInset}px`);
   if (stableHeight) document.documentElement.style.setProperty("--stable-viewport-height", `${stableHeight}px`);
 }
@@ -267,6 +260,11 @@ let expandedId = null;
 let searchTimer = null;
 let searchController = null;
 let searchBlurTimer = null;
+let searchSkeletonTimer = null;
+let renderedSearchMovies = [];
+let selectingMovie = false;
+let rateReturnTab = "feed";
+let profileBaseline = "";
 let searchLayoutBottom = window.visualViewport
   ? window.visualViewport.offsetTop + window.visualViewport.height
   : window.innerHeight;
@@ -284,11 +282,14 @@ let duplicatePendingMovie = null;
 let duplicatePendingEntry = null;
 let profile = {};
 let profileReturnTab = "feed";
+let profileDraftFavorites = [];
 let selectedOnboardingGenres = new Set();
 let selectedFrequency = "";
 
 const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
+const SEARCH_CACHE = new Map();
+const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
 
 // ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
 
@@ -562,10 +563,17 @@ function ratingThresholdHaptic(previousFive, nextFive) {
 
 // ─── Переключение вкладок и шагов ────────────────────────────────
 
+function syncTelegramSwipeBehavior(insideRating) {
+  if (!tg || !tg.isVersionAtLeast?.("7.7")) return;
+  const method = insideRating ? "disableVerticalSwipes" : "enableVerticalSwipes";
+  try { tg[method]?.(); } catch (_) { /* старый клиент */ }
+}
+
 async function showTab(name) {
   const previousTab = tab;
   const changed = previousTab !== name;
   const nextScreen = $("screen-" + name);
+  if (name === "rate" && previousTab !== "rate") rateReturnTab = previousTab;
   tab = name;
   if (name !== "rate") closeSearchKeyboard();
   $("screen-rate").classList.toggle("hidden", name !== "rate");
@@ -584,6 +592,8 @@ async function showTab(name) {
   $("tab-profile").classList.toggle("on", name === "profile");
   document.querySelector(".tabbar").style.setProperty("--tab-index", TAB_INDEX[name]);
   document.body.classList.toggle("has-action", showRateAction);
+  document.body.classList.toggle("rate-flow", name === "rate");
+  syncTelegramSwipeBehavior(name === "rate");
   syncAtmosphere();
 
   if (changed) {
@@ -651,6 +661,17 @@ function moveSharedStars(targetSlot, previousRect = null) {
   }, () => {});
 }
 
+function syncRateHeader() {
+  const searching = document.body.classList.contains("search-active");
+  const isEntry = step === 0 && !form.title && !searching;
+  $("head-title").textContent = isEntry
+    ? "Оценить"
+    : editingEntryId && step === 2 ? "Что изменилось?" : STEP_TITLES[step];
+  $("head-sub").textContent = `Шаг ${step + 1} из 4`;
+  $("head-sub").classList.toggle("hidden", isEntry);
+  $("progress").classList.toggle("hidden", isEntry);
+}
+
 
 function showStep(n) {
   const previousStep = step;
@@ -658,8 +679,7 @@ function showStep(n) {
   const previousStarsRect = shouldMoveStars ? starsVisualRect($("stars-shared")) : null;
   step = n;
   for (let i = 0; i <= 3; i++) $("step-" + i).classList.toggle("hidden", i !== n);
-  $("head-title").textContent = editingEntryId && n === 2 ? "Что изменилось?" : STEP_TITLES[n];
-  $("head-sub").textContent = `Шаг ${n + 1} из 4`;
+  syncRateHeader();
   const segs = $("progress").children;
   for (let i = 0; i < segs.length; i++) segs[i].classList.toggle("on", i <= n);
   $("btn-back").classList.toggle("hidden", n === 0);
@@ -713,13 +733,62 @@ function showSearchSuggestions() {
   $("popular").classList.add("hidden");
   $("recommended").classList.add("hidden");
   $("results").classList.remove("hidden");
-  $("results").setAttribute("aria-busy", popularMovies.length ? "false" : "true");
-  if (popularMovies.length) {
-    renderMovies($("results"), popularMovies, false);
-    $("results").prepend(el("div", "catalog-hint search-hint", "Популярные фильмы"));
+  const recent = readRecentMovies();
+  const suggestions = recent.length ? recent : popularMovies.slice(0, 5);
+  $("results").setAttribute("aria-busy", "false");
+  if (suggestions.length) {
+    renderSearchResults(suggestions);
+    $("results").prepend(el("div", "search-section-label", recent.length ? "Недавние" : "Популярное сейчас"));
   } else {
-    $("results").innerHTML = '<div class="catalog-state">Загружаю фильмы…</div>';
+    renderSearchSkeletons();
   }
+}
+
+function readRecentMovies() {
+  try { return JSON.parse(localStorage.getItem(RECENT_MOVIES_KEY) || "[]").slice(0, 5); }
+  catch (_) { return []; }
+}
+
+function rememberMovie(movie) {
+  const recent = readRecentMovies().filter((item) => Number(item.id) !== Number(movie.id));
+  recent.unshift(movie);
+  localStorage.setItem(RECENT_MOVIES_KEY, JSON.stringify(recent.slice(0, 5)));
+}
+
+function setSearchLoading(loading) {
+  $("results").setAttribute("aria-busy", String(loading));
+  $("search-spinner").classList.toggle("hidden", !loading);
+  $("btn-query-clear").classList.toggle("hidden", loading || !$("f-query").value);
+}
+
+function renderSearchSkeletons() {
+  $("results").innerHTML = "";
+  for (let i = 0; i < 4; i++) {
+    const row = el("div", "search-skeleton");
+    row.append(el("i", ""), el("span", ""));
+    $("results").append(row);
+  }
+}
+
+function renderSearchResults(movies) {
+  renderedSearchMovies = movies;
+  $("results").classList.remove("is-changing");
+  void $("results").offsetWidth;
+  renderMovies($("results"), movies, false);
+  $("results").classList.add("is-changing");
+}
+
+function renderSearchMessage(title, detail, action = null) {
+  $("results").innerHTML = "";
+  const state = el("div", "search-state");
+  state.append(el("strong", "", title), el("p", "", detail));
+  if (action) {
+    const button = el("button", "search-state-action", action.label);
+    button.type = "button";
+    button.addEventListener("click", action.run);
+    state.append(button);
+  }
+  $("results").append(state);
 }
 
 function onQueryInput() {
@@ -727,8 +796,11 @@ function onQueryInput() {
   $("query-err").classList.add("hidden");
   $("f-query").classList.remove("bad");
   clearTimeout(searchTimer);
+  clearTimeout(searchSkeletonTimer);
   if (searchController) searchController.abort();
+  $("btn-query-clear").classList.toggle("hidden", !q);
   if (!q) {
+    setSearchLoading(false);
     if (document.body.classList.contains("search-active")) showSearchSuggestions();
     else resetSearchView();
     return;
@@ -737,23 +809,33 @@ function onQueryInput() {
   $("recommended").classList.add("hidden");
   $("results").classList.remove("hidden");
   if (q.length < 2) {
-    $("results").setAttribute("aria-busy", "false");
-    $("results").innerHTML = '<div class="catalog-state">Введи ещё одну букву</div>';
+    setSearchLoading(false);
+    renderSearchMessage("Введите ещё 1 символ", "Так результаты будут точнее.");
     return;
   }
-  $("results").setAttribute("aria-busy", "true");
-  $("results").innerHTML = '<div class="catalog-state">Ищу фильмы…</div>';
-  searchTimer = setTimeout(() => searchMovies(q), 350);
+  if (SEARCH_CACHE.has(q.toLocaleLowerCase("ru"))) {
+    setSearchLoading(false);
+    renderSearchResults(SEARCH_CACHE.get(q.toLocaleLowerCase("ru")));
+    return;
+  }
+  setSearchLoading(true);
+  if (!renderedSearchMovies.length) {
+    searchSkeletonTimer = setTimeout(renderSearchSkeletons, 180);
+  }
+  searchTimer = setTimeout(() => searchMovies(q), 280);
 }
 
 function resetSearchView() {
   clearTimeout(searchTimer);
+  clearTimeout(searchSkeletonTimer);
   searchTimer = null;
   if (searchController) searchController.abort();
   searchController = null;
+  renderedSearchMovies = [];
   $("results").innerHTML = "";
   $("results").classList.add("hidden");
   $("results").setAttribute("aria-busy", "false");
+  setSearchLoading(false);
   $("popular").classList.remove("hidden");
   $("recommended").classList.toggle("hidden", !recommendationsLoaded);
 }
@@ -761,12 +843,10 @@ function resetSearchView() {
 function syncSearchViewport() {
   if (!document.body.classList.contains("search-active")) return;
   const viewport = window.visualViewport;
-  const inputBottom = $("f-query").getBoundingClientRect().bottom;
+  const inputBottom = document.querySelector(".search-row").getBoundingClientRect().bottom;
   const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
   const available = Math.max(150, viewportBottom - inputBottom - 12);
-  const keyboardInset = Math.max(0, searchLayoutBottom - viewportBottom);
   document.documentElement.style.setProperty("--search-results-height", `${available}px`);
-  document.documentElement.style.setProperty("--keyboard-inset", `${keyboardInset}px`);
 }
 
 function setSearchMode(active) {
@@ -778,15 +858,14 @@ function setSearchMode(active) {
   }
   document.body.classList.toggle("search-active", active);
   $("film-search").classList.toggle("search-focused", active);
+  syncRateHeader();
   if (active) {
     if (!$("f-query").value.trim()) showSearchSuggestions();
     requestAnimationFrame(() => {
       syncSearchViewport();
-      $("f-query").scrollIntoView({ block: "start", behavior: "auto" });
     });
   } else {
     document.documentElement.style.removeProperty("--search-results-height");
-    document.documentElement.style.removeProperty("--keyboard-inset");
     $("results").classList.add("hidden");
     $("popular").classList.remove("hidden");
     $("recommended").classList.toggle("hidden", !recommendationsLoaded);
@@ -949,17 +1028,37 @@ async function searchMovies(query) {
       corrected = movies.length > 0;
     }
     if ($("f-query").value.trim() !== query) return;
-    renderMovies($("results"), movies);
-    if (corrected) $("results").prepend(el("div", "catalog-hint", "Похоже, в названии опечатка — вот ближайшие фильмы"));
-    if (!movies.length) $("results").append(el("div", "catalog-state", "Ничего не найдено"));
+    clearTimeout(searchSkeletonTimer);
+    SEARCH_CACHE.set(query.toLocaleLowerCase("ru"), movies);
+    if (movies.length) {
+      renderSearchResults(movies);
+      if (corrected) $("results").prepend(el("div", "search-section-label", "Возможно, в названии опечатка"));
+    } else {
+      renderedSearchMovies = [];
+      renderSearchMessage(
+        "Ничего не найдено",
+        `Не удалось найти фильм «${query}». Проверь написание.`,
+        { label: "Очистить запрос", run: clearSearchQuery },
+      );
+    }
   } catch (e) {
     if (e.name === "AbortError") return;
-    $("results").innerHTML = "";
-    $("results").append(el("div", "catalog-state", "Каталог сейчас недоступен. Попробуй ещё раз."));
+    clearTimeout(searchSkeletonTimer);
+    renderSearchMessage(
+      "Не удалось выполнить поиск",
+      "Проверь подключение и попробуй снова.",
+      { label: "Повторить", run: () => searchMovies(query) },
+    );
   } finally {
     if (searchController === controller) searchController = null;
-    if ($("f-query").value.trim() === query) $("results").setAttribute("aria-busy", "false");
+    if ($("f-query").value.trim() === query) setSearchLoading(false);
   }
+}
+
+function clearSearchQuery() {
+  $("f-query").value = "";
+  onQueryInput();
+  $("f-query").focus();
 }
 
 async function loadPopular() {
@@ -1029,17 +1128,26 @@ function applyCatalogMovie(movie) {
 }
 
 async function selectMovie(movie) {
+  if (selectingMovie) return;
+  selectingMovie = true;
+  document.body.classList.add("movie-selecting");
+  rememberMovie(movie);
   closeSearchKeyboard();
-  const films = await store.getAll();
-  const existing = films.find((film) => Number(film.movieId || film.tmdbId) === Number(movie.id));
-  duplicatePendingMovie = existing ? movie : null;
-  duplicatePendingEntry = existing || null;
-  editingEntryId = null;
-  editingOriginalDate = "";
-  applyCatalogMovie(movie);
-  syncGenreAccent(form.genre);
-  haptic("impact", existing ? "medium" : "rigid");
-  showSelectedMovie(true);
+  try {
+    const films = await store.getAll();
+    const existing = films.find((film) => Number(film.movieId || film.tmdbId) === Number(movie.id));
+    duplicatePendingMovie = existing ? movie : null;
+    duplicatePendingEntry = existing || null;
+    editingEntryId = null;
+    editingOriginalDate = "";
+    applyCatalogMovie(movie);
+    syncGenreAccent(form.genre);
+    haptic("impact", existing ? "medium" : "rigid");
+    showSelectedMovie(true);
+  } finally {
+    selectingMovie = false;
+    document.body.classList.remove("movie-selecting");
+  }
 }
 
 function fillFormFromEntry(film, preserveNotes) {
@@ -1112,6 +1220,7 @@ function showSelectedMovie(fromCatalog) {
   );
   $("film-search").classList.add("hidden");
   $("film-hero").classList.remove("hidden");
+  $("film-hero").classList.toggle("hero-contain", !form.backdrop || form.backdrop === form.poster);
   showStep(0); // обновить герой-фон и кнопку
 }
 
@@ -1675,7 +1784,7 @@ function telegramUser() {
 
 function profileName() {
   const user = telegramUser();
-  return profile.name || [user.first_name, user.last_name].filter(Boolean).join(" ") || "Киноман";
+  return [user.first_name, user.last_name].filter(Boolean).join(" ") || profile.name || "Киноман";
 }
 
 function profileAvatar() {
@@ -1698,17 +1807,33 @@ function syncProfileAvatar() {
 async function renderProfile() {
   $("profile-name").value = profileName();
   $("profile-bio").value = profile.bio || "";
+  profileDraftFavorites = [...(profile.favorites || [])].map(String);
   $("profile-bio-count").textContent = $("profile-bio").value.length;
   syncProfileAvatar();
   await renderProfileFavorites();
+  profileBaseline = profileDraftSnapshot();
+  syncProfileDirty();
   window.scrollTo(0, 0);
+}
+
+function profileDraftSnapshot() {
+  return JSON.stringify({
+    bio: $("profile-bio").value.trim(),
+    favorites: [...profileDraftFavorites].sort(),
+  });
+}
+
+function syncProfileDirty() {
+  const dirty = !!profileBaseline && profileDraftSnapshot() !== profileBaseline;
+  $("btn-profile-save").classList.toggle("hidden", !dirty);
+  $("btn-profile-save").disabled = !dirty;
 }
 
 async function renderProfileFavorites() {
   const grid = $("profile-favorites");
   grid.innerHTML = "";
   const films = await store.getAll();
-  const selected = new Set(profile.favorites || []);
+  const selected = new Set(profileDraftFavorites);
   const favoriteFilms = films.filter((film) => selected.has(String(film.entryId || film.id))).slice(0, 4);
   favoriteFilms.forEach((film) => {
     const id = String(film.entryId || film.id);
@@ -1738,8 +1863,8 @@ async function openFavoritesPicker() {
   list.innerHTML = "";
   const films = await store.getAll();
   const availableIds = new Set(films.map((film) => String(film.entryId || film.id)));
-  const selected = new Set((profile.favorites || []).map(String).filter((id) => availableIds.has(id)));
-  profile.favorites = [...selected];
+  const selected = new Set(profileDraftFavorites.filter((id) => availableIds.has(id)));
+  profileDraftFavorites = [...selected];
   films.forEach((film) => {
     const id = String(film.entryId || film.id);
     const item = el("label", "favorites-picker-item");
@@ -1761,7 +1886,8 @@ async function openFavoritesPicker() {
       else selected.delete(id);
       item.classList.toggle("is-selected", checkbox.checked);
       item.querySelector("i").textContent = checkbox.checked ? "✓" : "+";
-      profile.favorites = [...selected];
+      profileDraftFavorites = [...selected];
+      syncProfileDirty();
       haptic("selection");
     });
     list.append(item);
@@ -1772,16 +1898,19 @@ async function openFavoritesPicker() {
 async function saveProfileFromForm() {
   profile = {
     ...profile,
-    name: $("profile-name").value.trim() || "Киноман",
     bio: $("profile-bio").value.trim(),
-    favorites: profile.favorites || [],
+    favorites: [...profileDraftFavorites],
   };
   await saveProfileData(profile);
   syncProfileAvatar();
   haptic("notification", "success");
   const button = $("btn-profile-save");
   button.textContent = "Сохранено ✓";
-  setTimeout(() => { button.textContent = "Сохранить профиль"; }, 1600);
+  profileBaseline = profileDraftSnapshot();
+  setTimeout(() => {
+    button.textContent = "Сохранить профиль";
+    syncProfileDirty();
+  }, 650);
 }
 
 function resizeAvatar(file) {
@@ -1858,11 +1987,23 @@ buildSliders();
 
 $("f-query").addEventListener("input", onQueryInput);
 $("f-query").addEventListener("focus", () => setSearchMode(true));
+$("btn-query-clear").addEventListener("click", clearSearchQuery);
+$("btn-search-cancel").addEventListener("click", () => {
+  $("f-query").value = "";
+  closeSearchKeyboard();
+  resetSearchView();
+});
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncSearchViewport);
   window.visualViewport.addEventListener("scroll", syncSearchViewport);
 }
 $("btn-clear").addEventListener("click", clearFilm);
+$("btn-hero-primary").addEventListener("click", () => $("btn-primary").click());
+$("btn-close-rate").addEventListener("click", () => {
+  closeSearchKeyboard();
+  haptic("impact", "soft");
+  showTab(rateReturnTab === "rate" ? "feed" : rateReturnTab);
+});
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
   if (step === 1) clearFilm();
@@ -1920,14 +2061,15 @@ $("btn-rerate-existing").addEventListener("click", () => {
 });
 $("btn-cancel-duplicate").addEventListener("click", () => $("duplicate-dialog").close());
 $("btn-favorites-done").addEventListener("click", async () => {
-  await saveProfileData(profile);
   $("favorites-dialog").close();
   await renderProfileFavorites();
+  syncProfileDirty();
 });
 
 $("btn-profile-save").addEventListener("click", saveProfileFromForm);
 $("profile-bio").addEventListener("input", () => {
   $("profile-bio-count").textContent = $("profile-bio").value.length;
+  syncProfileDirty();
 });
 $("btn-onboarding-next").addEventListener("click", () => {
   if (!selectedOnboardingGenres.size) {

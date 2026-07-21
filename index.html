@@ -6,7 +6,7 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=reset1">
+  <link rel="stylesheet" href="style.css?v=ui13">
 </head>
 <body>
 
@@ -23,6 +23,7 @@
         <div id="head-title" class="head-title">Фильм</div>
         <div id="head-sub" class="head-sub">Шаг 1 из 4</div>
       </div>
+      <button id="btn-close-rate" class="close-rate-btn" type="button" aria-label="Закрыть оценку">×</button>
     </div>
     <div id="progress" class="progress"><i></i><i></i><i></i><i></i></div>
   </div>
@@ -47,10 +48,18 @@
   <section id="step-0">
     <button id="search-scrim" class="search-scrim" type="button" aria-label="Закрыть поиск"></button>
     <div id="film-search">
-      <h2 class="ask">Что смотрел?</h2>
-      <p class="ask-sub">Найди фильм в каталоге</p>
+      <h2 class="ask">Выбери фильм</h2>
+      <p class="ask-sub">Популярное сегодня или поиск по каталогу</p>
       <div id="search-shell" class="search-shell">
-        <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Начни вводить название" autocomplete="off" enterkeyhint="search">
+        <div class="search-row">
+          <div class="search-control">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="f-query" type="search" aria-label="Поиск фильма" placeholder="Название фильма" autocomplete="off" enterkeyhint="search">
+            <span id="search-spinner" class="search-spinner hidden" aria-hidden="true"></span>
+            <button id="btn-query-clear" class="query-clear hidden" type="button" aria-label="Очистить запрос">×</button>
+          </div>
+          <button id="btn-search-cancel" class="search-cancel" type="button">Отмена</button>
+        </div>
         <div id="query-err" class="field-err hidden"><span class="bang">!</span>Введи название и выбери фильм.</div>
         <div id="results" class="list-box hidden" aria-live="polite" aria-busy="false"><!-- результаты поиска строит app.js --></div>
       </div>
@@ -66,6 +75,7 @@
 
     <!-- герой-экран выбранного фильма (тёмный фон включается классом body.hero) -->
     <div id="film-hero" class="hero-wrap hidden">
+      <div class="hero-media" aria-hidden="true"></div>
       <button id="btn-clear" class="clear-btn" aria-label="Сбросить фильм">×</button>
       <div class="hero-bottom">
         <div class="hero-label">Ты оцениваешь</div>
@@ -81,6 +91,7 @@
           <select id="f-genre"></select>
         </div>
       </div>
+      <button id="btn-hero-primary" class="primary hero-primary" type="button">Оценить фильм</button>
     </div>
   </section>
 
@@ -198,7 +209,7 @@
       <img id="profile-avatar-image" class="hidden" alt="Фото профиля">
       <span id="profile-avatar-fallback">К</span>
     </div>
-    <label class="profile-field">Имя<input id="profile-name" maxlength="40" autocomplete="name"></label>
+    <label class="profile-field">Имя<input id="profile-name" readonly aria-readonly="true" tabindex="-1"></label>
     <label class="profile-field">О себе<textarea id="profile-bio" maxlength="160" rows="3" placeholder="Пара слов о твоём вкусе"></textarea><small><span id="profile-bio-count">0</span>/160</small></label>
   </section>
   <section class="favorites-section">
@@ -206,7 +217,7 @@
     <p class="profile-help">Выбери до четырёх фильмов из дневника.</p>
     <div id="profile-favorites" class="favorites-grid"></div>
   </section>
-  <button id="btn-profile-save" class="primary">Сохранить профиль</button>
+  <button id="btn-profile-save" class="primary hidden">Сохранить профиль</button>
 </main>
 
 <!-- ─── Первый запуск ─── -->
@@ -274,6 +285,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=reset1"></script>
+<script src="app.js?v=ui13"></script>
 </body>
 </html>
