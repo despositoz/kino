@@ -303,34 +303,171 @@ let profileReturnTab = "feed";
 let profileDraftFavorites = [];
 let selectedOnboardingGenres = new Set();
 let selectedFrequency = "";
+let reviewMode = "self";
 
 const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 const SEARCH_CACHE = new Map();
 const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
+const REVIEW_DRAFT_KEY = "kino_review_draft_v1";
+const AI_MIN_DRAFT_CHARS = 20;
+const AI_REVIEW_ENDPOINT = String(window.KINO_AI_ENDPOINT || "").trim();
+let geminiRequestController = null;
 
-// ─── Промпт для ручного режима (как manualPrompt в jsx) ──────────
+// ─── Черновик рецензии и Gemini ─────────────────────────────────
 
-function filmContext() {
-  const details = CRITERIA.map((c) => `${c.label}: ${form.scores[c.id]}/10`).join("\n");
-  const q = calcQuality(form.scores);
-  return `Фильм: «${form.title}»${form.year ? ` (${form.year})` : ""}, жанр: ${form.genre}.
-Оценки по критериям:
-${details}
-Итог по качеству: ${q}/10 (${verdict(q)})
-Личное удовольствие: ${form.personal}/10
-Заметки зрителя:
-Понравилось: ${form.liked || "—"}
-Не понравилось: ${form.disliked || "—"}
-Запомнившийся момент: ${form.moment || "—"}`;
+function reviewFilmKey() {
+  return form.tmdbId ? `tmdb_${form.tmdbId}` : `${form.title.trim().toLocaleLowerCase("ru")}_${form.year}`;
 }
 
-function manualPrompt() {
-  return `Напиши короткую запись о фильме для моего личного кинодневника, от первого лица.
+function suggestedReviewDraft() {
+  return [form.liked, form.disliked, form.moment].filter(Boolean).join("\n");
+}
 
-${filmContext()}
+function readReviewWorkspace() {
+  try { return JSON.parse(localStorage.getItem(REVIEW_DRAFT_KEY) || "null"); }
+  catch (_) { return null; }
+}
 
-Важно: 70–130 слов максимум. Пиши как заметку для себя, спокойным разговорным тоном, простыми предложениями. Максимально сохраняй мои формулировки из заметок — не заменяй мои слова на сленг и не добавляй «молодёжных» выражений от себя. Без красивых оборотов, без формального итога, без списков. Возьми 2–3 вещи, которые меня реально зацепили, и напиши про них конкретно. Ответь только текстом записи.`;
+function persistReviewWorkspace() {
+  if (!form.title || step !== 3) return;
+  try {
+    localStorage.setItem(REVIEW_DRAFT_KEY, JSON.stringify({
+      filmKey: reviewFilmKey(),
+      mode: reviewMode,
+      selfText: $("e-review").value,
+      aiDraft: $("e-ai-draft").value,
+      aiResult: $("e-ai-result").value,
+      updatedAt: Date.now(),
+    }));
+  } catch (_) { /* черновик — дополнительная страховка */ }
+}
+
+function clearReviewWorkspace() {
+  try { localStorage.removeItem(REVIEW_DRAFT_KEY); }
+  catch (_) { /* localStorage может быть недоступен */ }
+}
+
+function meaningfulDraftLength(value) {
+  return value.replace(/\s/g, "").length;
+}
+
+function syncAIDraftState() {
+  const draft = $("e-ai-draft").value;
+  const meaningfulLength = meaningfulDraftLength(draft);
+  const remaining = Math.max(0, AI_MIN_DRAFT_CHARS - meaningfulLength);
+  $("ai-draft-count").textContent = draft.length;
+  $("btn-generate").disabled = remaining > 0 || !!geminiRequestController;
+  $("ai-draft-hint").textContent = remaining
+    ? `Добавь ещё ${remaining} ${remaining === 1 ? "символ" : remaining < 5 ? "символа" : "символов"}, чтобы Gemini не додумывал содержание.`
+    : "Черновика достаточно. Gemini только свяжет и слегка отредактирует твои мысли.";
+}
+
+function geminiErrorMessage(status, code) {
+  if (status === 429 || code === "limit")
+    return "Gemini временно недоступен: исчерпан бесплатный лимит. Попробуй позже или напиши запись сам.";
+  if (status === 408 || code === "timeout")
+    return "Gemini отвечает слишком долго. Черновик сохранён — попробуй ещё раз.";
+  if (status === 503 || code === "unavailable")
+    return "Gemini временно недоступен. Черновик сохранён — попробуй ещё раз.";
+  if (code === "not_configured")
+    return "Gemini ещё не подключён: укажи адрес Worker в index.html.";
+  return "Не удалось создать запись. Черновик сохранён — попробуй ещё раз.";
+}
+
+async function generateReviewWithGemini() {
+  const draft = $("e-ai-draft").value.trim();
+  if (meaningfulDraftLength(draft) < AI_MIN_DRAFT_CHARS) {
+    syncAIDraftState();
+    return;
+  }
+  if (!AI_REVIEW_ENDPOINT) {
+    $("ai-request-status").textContent = geminiErrorMessage(0, "not_configured");
+    $("ai-request-status").classList.add("is-error");
+    haptic("notification", "warning");
+    return;
+  }
+
+  persistReviewWorkspace();
+  geminiRequestController = new AbortController();
+  const timeout = setTimeout(() => geminiRequestController?.abort(), 15000);
+  const button = $("btn-generate");
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = "Gemini оформляет…";
+  $("ai-request-status").classList.remove("is-error");
+  $("ai-request-status").textContent = "Черновик сохранён. Обычно ответ занимает несколько секунд.";
+
+  try {
+    const quality = calcQuality(form.scores);
+    const response = await fetch(AI_REVIEW_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        draft,
+        film: {
+          title: form.title,
+          year: form.year,
+          rating: toFive(quality),
+        },
+      }),
+      signal: geminiRequestController.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.review) {
+      const error = new Error(data.error || "request_failed");
+      error.status = response.status;
+      error.code = data.code;
+      throw error;
+    }
+    $("e-ai-result").value = data.review.trim();
+    $("ai-request-status").textContent = "Готово. Проверь текст и поправь его перед сохранением.";
+    persistReviewWorkspace();
+    haptic("notification", "success");
+    $("e-ai-result").focus();
+  } catch (error) {
+    const code = error.name === "AbortError" ? "timeout" : error.code;
+    $("ai-request-status").textContent = geminiErrorMessage(error.status, code);
+    $("ai-request-status").classList.add("is-error");
+    haptic("notification", "error");
+  } finally {
+    clearTimeout(timeout);
+    geminiRequestController = null;
+    button.classList.remove("is-loading");
+    button.textContent = $("e-ai-result").value.trim() ? "Создать заново" : "Создать с Gemini";
+    syncAIDraftState();
+  }
+}
+
+function setReviewMode(mode, save = true) {
+  reviewMode = mode === "ai" ? "ai" : "self";
+  const isAI = reviewMode === "ai";
+  $("btn-mode-self").classList.toggle("is-active", !isAI);
+  $("btn-mode-ai").classList.toggle("is-active", isAI);
+  $("btn-mode-self").setAttribute("aria-pressed", String(!isAI));
+  $("btn-mode-ai").setAttribute("aria-pressed", String(isAI));
+  $("review-self-panel").classList.toggle("hidden", isAI);
+  $("review-ai-panel").classList.toggle("hidden", !isAI);
+  $("entry-err").classList.add("hidden");
+  if (isAI) syncAIDraftState();
+  if (save) persistReviewWorkspace();
+}
+
+function prepareReviewWorkspace() {
+  const saved = readReviewWorkspace();
+  if (saved?.filmKey === reviewFilmKey()) {
+    $("e-review").value = saved.selfText || "";
+    $("e-ai-draft").value = saved.aiDraft || "";
+    $("e-ai-result").value = saved.aiResult || "";
+    setReviewMode(saved.mode, false);
+  } else {
+    $("e-review").value = form.review || "";
+    $("e-ai-draft").value = suggestedReviewDraft();
+    $("e-ai-result").value = "";
+    setReviewMode("self", false);
+    persistReviewWorkspace();
+  }
+  syncAIDraftState();
 }
 
 // ─── Помощники ───────────────────────────────────────────────────
@@ -737,8 +874,7 @@ function showStep(n) {
     updateStars("2");
   }
   if (n === 3) {
-    $("e-prompt").value = manualPrompt();
-    $("e-review").value = form.review || "";
+    prepareReviewWorkspace();
   }
   window.scrollTo(0, 0);
 }
@@ -1255,6 +1391,7 @@ function showSelectedMovie(fromCatalog) {
 
 function clearFilm() {
   closeSearchKeyboard();
+  clearReviewWorkspace();
   duplicatePendingMovie = null;
   duplicatePendingEntry = null;
   editingEntryId = null;
@@ -1364,10 +1501,12 @@ function primaryAction() {
     haptic("impact", "soft");
     showStep(3);
   } else {
-    const review = $("e-review").value.trim();
+    const review = (reviewMode === "ai" ? $("e-ai-result").value : $("e-review").value).trim();
     if (!review) {
       $("entry-err-text").textContent =
-        "Вставь текст записи или нажми «Сохранить без записи».";
+        reviewMode === "ai"
+          ? "Создай текст с Gemini или нажми «Сохранить без записи»."
+          : "Напиши текст или нажми «Сохранить без записи».";
       $("entry-err").classList.remove("hidden");
       return;
     }
@@ -1399,6 +1538,7 @@ async function saveEntry(review) {
   }
   $("entry-err").classList.add("hidden");
   haptic("notification", "success");
+  clearReviewWorkspace();
 
   // сброс формы и переход в дневник
   form = emptyForm();
@@ -1408,6 +1548,8 @@ async function saveEntry(review) {
   $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
   syncFeelingCards();
   $("e-review").value = "";
+  $("e-ai-draft").value = "";
+  $("e-ai-result").value = "";
   $("sliders").innerHTML = "";
   buildSliders();
   $("film-search").classList.remove("hidden");
@@ -2167,10 +2309,29 @@ $("search-scrim").addEventListener("click", () => {
 $("btn-primary").addEventListener("click", primaryAction);
 $("btn-save-empty").addEventListener("click", () => saveEntry(""));
 
-$("btn-copy").addEventListener("click", async () => {
-  const ok = await copyText($("e-prompt").value);
-  $("btn-copy").textContent = ok ? "Скопировано ✓" : "Не удалось — выдели текст вручную";
-  setTimeout(() => { $("btn-copy").textContent = "Скопировать промпт"; }, 2000);
+$("btn-mode-self").addEventListener("click", () => {
+  setReviewMode("self");
+  haptic("selection");
+});
+$("btn-mode-ai").addEventListener("click", () => {
+  setReviewMode("ai");
+  haptic("selection");
+});
+$("btn-generate").addEventListener("click", generateReviewWithGemini);
+$("e-review").addEventListener("input", () => {
+  $("entry-err").classList.add("hidden");
+  persistReviewWorkspace();
+});
+$("e-ai-draft").addEventListener("input", () => {
+  $("entry-err").classList.add("hidden");
+  $("ai-request-status").classList.remove("is-error");
+  $("ai-request-status").textContent = "Gemini использует только твои заметки и не сохраняет запись автоматически.";
+  syncAIDraftState();
+  persistReviewWorkspace();
+});
+$("e-ai-result").addEventListener("input", () => {
+  $("entry-err").classList.add("hidden");
+  persistReviewWorkspace();
 });
 
 $("tab-rate").addEventListener("click", () => {

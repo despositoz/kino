@@ -6,7 +6,9 @@
 <title>Кинодневник</title>
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=ui15">
+  <!-- После публикации Worker вставь сюда его адрес вида https://kino-ai-review.<subdomain>.workers.dev/review -->
+  <script>window.KINO_AI_ENDPOINT = "https://kino-ai-review.despositoz-kino.workers.dev/review";</script>
+  <link rel="stylesheet" href="style.css?v=ui16">
 </head>
 <body>
 
@@ -144,17 +146,49 @@
     </div>
   </section>
 
-  <!-- Шаг 4: запись через чат с Claude -->
+  <!-- Шаг 4: самостоятельная запись или оформление через Gemini -->
   <section id="step-3" class="hidden">
-    <div class="note-block">
-      <div class="sec-label">Промпт для Claude</div>
-      <p class="ask-sub">Скопируй промпт, отправь его Claude в чате, а готовый текст записи вставь в поле ниже.</p>
-      <textarea id="e-prompt" readonly rows="8"></textarea>
-      <button id="btn-copy" class="copy-btn">Скопировать промпт</button>
+    <div class="review-intro">
+      <h2>Как хочешь написать?</h2>
+      <p>Твой текст всегда можно поправить перед сохранением.</p>
     </div>
-    <div class="note-block">
-      <div class="sec-label">Готовая запись</div>
-      <textarea id="e-review" placeholder="Вставь сюда текст записи…" rows="5"></textarea>
+
+    <div class="review-mode" role="group" aria-label="Способ написания записи">
+      <button id="btn-mode-self" class="review-mode-button is-active" type="button" aria-pressed="true">
+        <span>✎</span><strong>Написать самому</strong><small>Без ИИ и без сети</small>
+      </button>
+      <button id="btn-mode-ai" class="review-mode-button" type="button" aria-pressed="false">
+        <span>✦</span><strong>Оформить с Gemini</strong><small>Gemini свяжет твои мысли</small>
+      </button>
+    </div>
+
+    <div id="review-self-panel" class="review-panel">
+      <label class="review-field" for="e-review">
+        <span>Твоя запись</span>
+        <textarea id="e-review" placeholder="Напиши, что осталось после фильма…" rows="8"></textarea>
+      </label>
+      <p class="review-privacy">Текст сохранится как есть. Ничего никуда не отправляется.</p>
+    </div>
+
+    <div id="review-ai-panel" class="review-panel hidden">
+      <label class="review-field" for="e-ai-draft">
+        <span>Черновые мысли</span>
+        <textarea id="e-ai-draft" maxlength="2000" placeholder="Например: понравилась музыка, финал показался затянутым, запомнилась сцена…" rows="6"></textarea>
+      </label>
+      <div class="review-draft-meta">
+        <span id="ai-draft-hint">Напиши хотя бы 20 символов — Gemini не будет придумывать текст из ничего.</span>
+        <span><b id="ai-draft-count">0</b>/2000</span>
+      </div>
+      <button id="btn-generate" class="copy-btn" type="button" disabled>Создать с Gemini</button>
+      <p id="ai-request-status" class="review-copy-help" aria-live="polite">Gemini использует только твои заметки и не сохраняет запись автоматически.</p>
+
+      <label class="review-field review-result-field" for="e-ai-result">
+        <span>Результат Gemini</span>
+        <textarea id="e-ai-result" placeholder="Здесь появится текст. Его можно отредактировать перед сохранением." rows="7"></textarea>
+      </label>
+    </div>
+
+    <div class="review-save-error">
       <p id="entry-err" class="field-err hidden"><span class="bang">!</span><span id="entry-err-text"></span></p>
     </div>
   </section>
@@ -288,6 +322,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui15"></script>
+<script src="app.js?v=ui16"></script>
 </body>
 </html>
