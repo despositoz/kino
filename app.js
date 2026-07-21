@@ -304,6 +304,7 @@ let profileDraftFavorites = [];
 let selectedOnboardingGenres = new Set();
 let selectedFrequency = "";
 let reviewMode = "self";
+let ratingCriterionIndex = 0;
 
 const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
@@ -320,24 +321,21 @@ function reviewFilmKey() {
   return form.tmdbId ? `tmdb_${form.tmdbId}` : `${form.title.trim().toLocaleLowerCase("ru")}_${form.year}`;
 }
 
-function suggestedReviewDraft() {
-  return [form.liked, form.disliked, form.moment].filter(Boolean).join("\n");
-}
-
 function readReviewWorkspace() {
   try { return JSON.parse(localStorage.getItem(REVIEW_DRAFT_KEY) || "null"); }
   catch (_) { return null; }
 }
 
 function persistReviewWorkspace() {
-  if (!form.title || step !== 3) return;
+  if (!form.title || (step !== 2 && step !== 3)) return;
   try {
     localStorage.setItem(REVIEW_DRAFT_KEY, JSON.stringify({
       filmKey: reviewFilmKey(),
       mode: reviewMode,
-      selfText: $("e-review").value,
-      aiDraft: $("e-ai-draft").value,
-      aiResult: $("e-ai-result").value,
+      liked: $("f-liked").value,
+      disliked: $("f-disliked").value,
+      moment: $("f-moment").value,
+      editorText: $("e-review").value,
       updatedAt: Date.now(),
     }));
   } catch (_) { /* черновик — дополнительная страховка */ }
@@ -352,15 +350,72 @@ function meaningfulDraftLength(value) {
   return value.replace(/\s/g, "").length;
 }
 
-function syncAIDraftState() {
-  const draft = $("e-ai-draft").value;
+function captureNotes() {
+  form.liked = $("f-liked").value.trim();
+  form.disliked = $("f-disliked").value.trim();
+  form.moment = $("f-moment").value.trim();
+}
+
+function reviewDraftText() {
+  return [
+    form.liked ? `Понравилось: ${form.liked}` : "",
+    form.disliked ? `Не понравилось: ${form.disliked}` : "",
+    form.moment ? `Запомнилось: ${form.moment}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function syncReviewChoiceState() {
+  captureNotes();
+  const draft = reviewDraftText();
   const meaningfulLength = meaningfulDraftLength(draft);
   const remaining = Math.max(0, AI_MIN_DRAFT_CHARS - meaningfulLength);
-  $("ai-draft-count").textContent = draft.length;
-  $("btn-generate").disabled = remaining > 0 || !!geminiRequestController;
+  $("btn-notes-ai").disabled = remaining > 0 || !!geminiRequestController;
   $("ai-draft-hint").textContent = remaining
-    ? `Добавь ещё ${remaining} ${remaining === 1 ? "символ" : remaining < 5 ? "символа" : "символов"}, чтобы Gemini не додумывал содержание.`
-    : "Черновика достаточно. Gemini только свяжет и слегка отредактирует твои мысли.";
+    ? `Добавь ещё ${remaining} ${remaining === 1 ? "символ" : remaining < 5 ? "символа" : "символов"} в заметки для Gemini.`
+    : "Заметок достаточно для Gemini.";
+}
+
+function prepareNotesWorkspace() {
+  const saved = readReviewWorkspace();
+  if (saved?.filmKey === reviewFilmKey()) {
+    form.liked = saved.liked || "";
+    form.disliked = saved.disliked || "";
+    form.moment = saved.moment || "";
+    form.review = saved.editorText || form.review || "";
+    reviewMode = saved.mode === "ai" ? "ai" : "self";
+    $("f-liked").value = form.liked;
+    $("f-disliked").value = form.disliked;
+    $("f-moment").value = form.moment;
+    $("e-review").value = form.review;
+    syncFeelingCards();
+  }
+  $("ai-request-status").textContent = "";
+  $("ai-request-status").classList.remove("is-error");
+  syncReviewChoiceState();
+}
+
+function syncReviewEditor() {
+  if (!$("e-review").value && form.review) $("e-review").value = form.review;
+  const fromAI = reviewMode === "ai";
+  $("review-editor-source").textContent = fromAI ? "Создано с Gemini" : "Без ИИ";
+  $("review-editor-title").textContent = fromAI ? "Проверь текст Gemini" : "Напиши свою запись";
+  $("review-editor-count").textContent = $("e-review").value.length;
+}
+
+function openReviewEditor(mode, text) {
+  reviewMode = mode;
+  form.review = text;
+  $("e-review").value = text;
+  showStep(3);
+  persistReviewWorkspace();
+  requestAnimationFrame(() => $("e-review").focus());
+}
+
+function startSelfReview() {
+  captureNotes();
+  const text = editingEntryId ? form.review || "" : "";
+  haptic("impact", "soft");
+  openReviewEditor("self", text);
 }
 
 function geminiErrorMessage(status, code) {
@@ -376,9 +431,10 @@ function geminiErrorMessage(status, code) {
 }
 
 async function generateReviewWithGemini() {
-  const draft = $("e-ai-draft").value.trim();
+  captureNotes();
+  const draft = reviewDraftText();
   if (meaningfulDraftLength(draft) < AI_MIN_DRAFT_CHARS) {
-    syncAIDraftState();
+    syncReviewChoiceState();
     return;
   }
   if (!AI_REVIEW_ENDPOINT) {
@@ -391,26 +447,19 @@ async function generateReviewWithGemini() {
   persistReviewWorkspace();
   geminiRequestController = new AbortController();
   const timeout = setTimeout(() => geminiRequestController?.abort(), 15000);
-  const button = $("btn-generate");
+  const button = $("btn-notes-ai");
   button.disabled = true;
   button.classList.add("is-loading");
-  button.textContent = "Gemini оформляет…";
+  button.setAttribute("aria-busy", "true");
+  button.setAttribute("aria-label", "Gemini оформляет запись");
   $("ai-request-status").classList.remove("is-error");
   $("ai-request-status").textContent = "Черновик сохранён. Обычно ответ занимает несколько секунд.";
 
   try {
-    const quality = calcQuality(form.scores);
     const response = await fetch(AI_REVIEW_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        draft,
-        film: {
-          title: form.title,
-          year: form.year,
-          rating: toFive(quality),
-        },
-      }),
+      body: JSON.stringify({ draft }),
       signal: geminiRequestController.signal,
     });
     const data = await response.json().catch(() => ({}));
@@ -420,11 +469,9 @@ async function generateReviewWithGemini() {
       error.code = data.code;
       throw error;
     }
-    $("e-ai-result").value = data.review.trim();
-    $("ai-request-status").textContent = "Готово. Проверь текст и поправь его перед сохранением.";
-    persistReviewWorkspace();
+    const review = data.review.trim();
     haptic("notification", "success");
-    $("e-ai-result").focus();
+    openReviewEditor("ai", review);
   } catch (error) {
     const code = error.name === "AbortError" ? "timeout" : error.code;
     $("ai-request-status").textContent = geminiErrorMessage(error.status, code);
@@ -434,40 +481,10 @@ async function generateReviewWithGemini() {
     clearTimeout(timeout);
     geminiRequestController = null;
     button.classList.remove("is-loading");
-    button.textContent = $("e-ai-result").value.trim() ? "Создать заново" : "Создать с Gemini";
-    syncAIDraftState();
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("aria-label");
+    if (step === 2) syncReviewChoiceState();
   }
-}
-
-function setReviewMode(mode, save = true) {
-  reviewMode = mode === "ai" ? "ai" : "self";
-  const isAI = reviewMode === "ai";
-  $("btn-mode-self").classList.toggle("is-active", !isAI);
-  $("btn-mode-ai").classList.toggle("is-active", isAI);
-  $("btn-mode-self").setAttribute("aria-pressed", String(!isAI));
-  $("btn-mode-ai").setAttribute("aria-pressed", String(isAI));
-  $("review-self-panel").classList.toggle("hidden", isAI);
-  $("review-ai-panel").classList.toggle("hidden", !isAI);
-  $("entry-err").classList.add("hidden");
-  if (isAI) syncAIDraftState();
-  if (save) persistReviewWorkspace();
-}
-
-function prepareReviewWorkspace() {
-  const saved = readReviewWorkspace();
-  if (saved?.filmKey === reviewFilmKey()) {
-    $("e-review").value = saved.selfText || "";
-    $("e-ai-draft").value = saved.aiDraft || "";
-    $("e-ai-result").value = saved.aiResult || "";
-    setReviewMode(saved.mode, false);
-  } else {
-    $("e-review").value = form.review || "";
-    $("e-ai-draft").value = suggestedReviewDraft();
-    $("e-ai-result").value = "";
-    setReviewMode("self", false);
-    persistReviewWorkspace();
-  }
-  syncAIDraftState();
 }
 
 // ─── Помощники ───────────────────────────────────────────────────
@@ -737,7 +754,8 @@ async function showTab(name) {
   $("head-feed").classList.toggle("hidden", name !== "feed");
   $("head-diary").classList.toggle("hidden", name !== "diary");
   $("head-profile").classList.toggle("hidden", name !== "profile");
-  const showRateAction = name === "rate" && (step > 0 || (step === 0 && !!form.title));
+  const showRateAction = name === "rate" &&
+    (step === 1 || step === 3 || (step === 0 && !!form.title));
   $("footer-action").classList.toggle("hidden", !showRateAction);
   $("tab-rate").classList.toggle("on", name === "rate");
   $("tab-feed").classList.toggle("on", name === "feed");
@@ -841,14 +859,15 @@ function showStep(n) {
   const primary = $("btn-primary");
   primary.textContent = editingEntryId && n >= 2
     ? "Обновить запись"
-    : n === 0 ? "Оценить фильм" : n === 1 ? "Далее" : n === 2 ? "Записать" : "Сохранить запись";
+    : n === 0 ? "Оценить фильм" : n === 1 ? "Далее" : "Сохранить запись";
   primary.classList.toggle("muted", n === 0 && !form.title);
-  $("btn-save-empty").classList.toggle("hidden", n !== 3);
-  const showRateAction = tab === "rate" && (n > 0 || (n === 0 && !!form.title));
+  $("btn-save-empty").classList.add("hidden");
+  const showRateAction = tab === "rate" && (n === 1 || n === 3 || (n === 0 && !!form.title));
   $("footer-action").classList.toggle("hidden", !showRateAction);
   document.body.classList.toggle("has-action", showRateAction);
 
   if (n === 1) {
+    if (previousStep === 0) ratingCriterionIndex = 0;
     moveSharedStars($("stars-slot-rating"), previousStarsRect);
     $("rating-mode-label").textContent = editingEntryId ? "Меняешь оценку" : "Оцениваешь";
     $("rating-title").textContent = form.title;
@@ -868,13 +887,15 @@ function showStep(n) {
     void $("rating-film").offsetWidth;
     $("rating-film").classList.add("poster-enter");
     updateStars("1");
+    syncRatingCriterion();
   }
   if (n === 2) {
     moveSharedStars($("stars-slot-final"), previousStarsRect);
     updateStars("2");
+    prepareNotesWorkspace();
   }
   if (n === 3) {
-    prepareReviewWorkspace();
+    syncReviewEditor();
   }
   window.scrollTo(0, 0);
 }
@@ -1396,6 +1417,7 @@ function clearFilm() {
   duplicatePendingEntry = null;
   editingEntryId = null;
   editingOriginalDate = "";
+  ratingCriterionIndex = 0;
   form.title = ""; form.year = ""; form.tmdbId = null;
   form.poster = ""; form.posterPreview = ""; form.backdrop = ""; form.backdropPreview = "";
   document.body.classList.remove("hero-image-loaded");
@@ -1412,51 +1434,137 @@ function clearFilm() {
 
 // ─── Шаг 2: слайдеры ─────────────────────────────────────────────
 
-function paintSlider(range, color) {
+function scoreFeeling(value) {
+  if (value >= 10) return "Идеально";
+  if (value >= 9) return "Очень сильно";
+  if (value >= 7) return "Сильно";
+  if (value >= 5) return "Нормально";
+  if (value >= 3) return "Слабо";
+  return "Совсем не сработало";
+}
+
+function scoreColor(value, personal) {
+  if (value >= 9) return "var(--gold)";
+  if (value >= 7) return personal ? "#a67d10" : "var(--genre-accent)";
+  if (value >= 4) return "color-mix(in srgb, var(--genre-accent) 58%, #9b7667)";
+  return "var(--rating-low)";
+}
+
+function paintSlider(range, wrap, badge, feeling, personal) {
   const min = Number(range.min);
   const max = Number(range.max);
   const value = Number(range.value);
   const pct = max === min ? 0 : ((value - min) / (max - min)) * 100;
+  const color = scoreColor(value, personal);
   range.style.setProperty("--slider-color", color);
   range.style.setProperty("--slider-fill", `${Math.max(0, Math.min(100, pct))}%`);
+  range.style.setProperty("--slider-shadow", value >= 9
+    ? "0 2px 9px color-mix(in srgb, var(--slider-color) 46%, transparent)"
+    : value >= 7
+      ? "0 2px 6px color-mix(in srgb, var(--slider-color) 28%, transparent)"
+      : "none");
+  wrap.classList.toggle("score-high", value >= 7);
+  wrap.classList.toggle("score-top", value >= 9);
+  wrap.style.setProperty("--score-color", color);
+  badge.textContent = String(value);
+  feeling.textContent = scoreFeeling(value);
+}
+
+function syncRatingCriterion() {
+  const track = document.querySelector(".criteria-track");
+  const cards = [...document.querySelectorAll(".crit")];
+  if (!track || !cards.length) return;
+  ratingCriterionIndex = Math.max(0, Math.min(cards.length - 1, ratingCriterionIndex));
+  track.style.transform = `translate3d(-${ratingCriterionIndex * 100}%, 0, 0)`;
+  cards.forEach((card, index) => {
+    const active = index === ratingCriterionIndex;
+    card.setAttribute("aria-hidden", String(!active));
+    card.querySelector("input").tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll(".criterion-dot").forEach((dot, index) => {
+    const active = index === ratingCriterionIndex;
+    dot.classList.toggle("on", active);
+    dot.setAttribute("aria-current", active ? "step" : "false");
+  });
+  const count = $("criterion-count");
+  if (count) count.textContent = `${ratingCriterionIndex + 1} из ${cards.length}`;
+  if (step === 1) {
+    $("btn-primary").textContent = ratingCriterionIndex === cards.length - 1
+      ? "К заметкам"
+      : "Следующая оценка";
+  }
+}
+
+function moveRatingCriterion(nextIndex) {
+  const total = CRITERIA.length + 1;
+  const target = Math.max(0, Math.min(total - 1, nextIndex));
+  if (target === ratingCriterionIndex) return;
+  ratingCriterionIndex = target;
+  syncRatingCriterion();
 }
 
 function buildSliders() {
   const box = $("sliders");
-  const accent = "var(--genre-accent)", gold = "var(--gold)";
+  box.innerHTML = "";
 
-  const make = (name, value, personal, oninput) => {
+  const progress = el("div", "criteria-progress");
+  const count = el("div", "criterion-count", "1 из 6");
+  count.id = "criterion-count";
+  count.setAttribute("aria-live", "polite");
+  const dots = el("div", "criterion-dots");
+  dots.setAttribute("aria-label", "Критерии оценки");
+  progress.append(count, dots);
+
+  const viewport = el("div", "criteria-viewport");
+  const track = el("div", "criteria-track");
+  viewport.append(track);
+  box.append(progress, viewport);
+
+  const make = (name, value, personal, index, oninput) => {
     const wrap = el("div", "crit" + (personal ? " personal" : ""));
+    wrap.setAttribute("aria-label", `${name}, критерий ${index + 1} из ${CRITERIA.length + 1}`);
     const top = el("div", "crit-top");
     const label = el("div", "crit-name", name);
     const badge = el("div", "crit-badge", String(value));
-    top.append(label, badge);
+    const feeling = el("div", "crit-feeling", scoreFeeling(value));
+    top.append(label, badge, feeling);
     const range = document.createElement("input");
     range.type = "range";
     range.className = "sc-slider";
     range.min = "1"; range.max = "10"; range.step = "1";
     range.value = String(value);
     range.setAttribute("aria-label", name);
-    const color = personal ? gold : accent;
-    paintSlider(range, color);
+    const scale = el("div", "crit-scale");
+    scale.append(el("span", "", "1"), el("span", "", "10"));
+    paintSlider(range, wrap, badge, feeling, personal);
     range.addEventListener("input", () => {
       const previousFive = toFive(calcQuality(form.scores));
-      badge.textContent = range.value;
-      paintSlider(range, color);
       oninput(+range.value);
+      paintSlider(range, wrap, badge, feeling, personal);
       const nextFive = toFive(calcQuality(form.scores));
       haptic("selection");
       ratingThresholdHaptic(previousFive, nextFive);
       updateStars("1");
     });
-    wrap.append(top, range);
-    box.append(wrap);
+    wrap.append(top, range, scale);
+    track.append(wrap);
+
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "criterion-dot";
+    dot.setAttribute("aria-label", `Перейти к критерию «${name}»`);
+    dot.addEventListener("click", () => {
+      haptic("selection");
+      moveRatingCriterion(index);
+    });
+    dots.append(dot);
   };
 
-  CRITERIA.forEach((c) =>
-    make(c.label, form.scores[c.id], false, (v) => { form.scores[c.id] = v; }));
-  make("Личное удовольствие («зашло»)", form.personal, true,
+  CRITERIA.forEach((c, index) =>
+    make(c.label, form.scores[c.id], false, index, (v) => { form.scores[c.id] = v; }));
+  make("Насколько тебе зашло?", form.personal, true, CRITERIA.length,
     (v) => { form.personal = v; });
+  syncRatingCriterion();
 }
 
 // обновить карточку звёзд (suffix "1" — на шаге оценок, "2" — на итоге)
@@ -1492,21 +1600,19 @@ function primaryAction() {
     haptic("impact", "soft");
     showStep(1);
   } else if (step === 1) {
-    haptic("impact", "soft");
-    showStep(2);
+    if (ratingCriterionIndex < CRITERIA.length) {
+      haptic("impact", "soft");
+      moveRatingCriterion(ratingCriterionIndex + 1);
+    } else {
+      haptic("impact", "soft");
+      showStep(2);
+    }
   } else if (step === 2) {
-    form.liked = $("f-liked").value.trim();
-    form.disliked = $("f-disliked").value.trim();
-    form.moment = $("f-moment").value.trim();
-    haptic("impact", "soft");
-    showStep(3);
+    return;
   } else {
-    const review = (reviewMode === "ai" ? $("e-ai-result").value : $("e-review").value).trim();
+    const review = $("e-review").value.trim();
     if (!review) {
-      $("entry-err-text").textContent =
-        reviewMode === "ai"
-          ? "Создай текст с Gemini или нажми «Сохранить без записи»."
-          : "Напиши текст или нажми «Сохранить без записи».";
+      $("entry-err-text").textContent = "Напиши или отредактируй текст перед сохранением.";
       $("entry-err").classList.remove("hidden");
       return;
     }
@@ -1532,8 +1638,14 @@ async function saveEntry(review) {
   try {
     await store.save(film);
   } catch (e) {
-    $("entry-err-text").textContent = "Не сохранилось: " + (e.message || e) + ". Попробуй ещё раз.";
-    $("entry-err").classList.remove("hidden");
+    const message = "Не сохранилось. Попробуй ещё раз.";
+    if (step === 2) {
+      $("ai-request-status").textContent = message;
+      $("ai-request-status").classList.add("is-error");
+    } else {
+      $("entry-err-text").textContent = message;
+      $("entry-err").classList.remove("hidden");
+    }
     return;
   }
   $("entry-err").classList.add("hidden");
@@ -1548,8 +1660,6 @@ async function saveEntry(review) {
   $("f-liked").value = ""; $("f-disliked").value = ""; $("f-moment").value = "";
   syncFeelingCards();
   $("e-review").value = "";
-  $("e-ai-draft").value = "";
-  $("e-ai-result").value = "";
   $("sliders").innerHTML = "";
   buildSliders();
   $("film-search").classList.remove("hidden");
@@ -2298,7 +2408,8 @@ $("btn-close-rate").addEventListener("click", () => {
 });
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
-  if (step === 1) clearFilm();
+  if (step === 1 && ratingCriterionIndex > 0) moveRatingCriterion(ratingCriterionIndex - 1);
+  else if (step === 1) clearFilm();
   else showStep(step - 1);
 });
 $("search-scrim").addEventListener("click", () => {
@@ -2309,28 +2420,16 @@ $("search-scrim").addEventListener("click", () => {
 $("btn-primary").addEventListener("click", primaryAction);
 $("btn-save-empty").addEventListener("click", () => saveEntry(""));
 
-$("btn-mode-self").addEventListener("click", () => {
-  setReviewMode("self");
-  haptic("selection");
+$("btn-notes-ai").addEventListener("click", generateReviewWithGemini);
+$("btn-notes-self").addEventListener("click", startSelfReview);
+$("btn-notes-save").addEventListener("click", () => {
+  captureNotes();
+  saveEntry("");
 });
-$("btn-mode-ai").addEventListener("click", () => {
-  setReviewMode("ai");
-  haptic("selection");
-});
-$("btn-generate").addEventListener("click", generateReviewWithGemini);
 $("e-review").addEventListener("input", () => {
   $("entry-err").classList.add("hidden");
-  persistReviewWorkspace();
-});
-$("e-ai-draft").addEventListener("input", () => {
-  $("entry-err").classList.add("hidden");
-  $("ai-request-status").classList.remove("is-error");
-  $("ai-request-status").textContent = "Gemini использует только твои заметки и не сохраняет запись автоматически.";
-  syncAIDraftState();
-  persistReviewWorkspace();
-});
-$("e-ai-result").addEventListener("input", () => {
-  $("entry-err").classList.add("hidden");
+  $("review-editor-count").textContent = $("e-review").value.length;
+  form.review = $("e-review").value;
   persistReviewWorkspace();
 });
 
@@ -2353,7 +2452,13 @@ $("tab-profile").addEventListener("click", () => {
 $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
 
 ["f-liked", "f-disliked", "f-moment"].forEach((id) => {
-  $(id).addEventListener("input", syncFeelingCards);
+  $(id).addEventListener("input", () => {
+    syncFeelingCards();
+    $("ai-request-status").textContent = "";
+    $("ai-request-status").classList.remove("is-error");
+    syncReviewChoiceState();
+    persistReviewWorkspace();
+  });
 });
 document.addEventListener("pointerdown", (event) => {
   const active = document.activeElement;

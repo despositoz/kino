@@ -8,7 +8,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <!-- После публикации Worker вставь сюда его адрес вида https://kino-ai-review.<subdomain>.workers.dev/review -->
   <script>window.KINO_AI_ENDPOINT = "https://kino-ai-review.despositoz-kino.workers.dev/review";</script>
-  <link rel="stylesheet" href="style.css?v=ui16">
+  <link rel="stylesheet" href="style.css?v=ui18">
 </head>
 <body>
 
@@ -144,48 +144,37 @@
       <div class="feeling-head"><span>▶</span><div class="sec-label">Какая сцена засела в голове?</div></div>
       <textarea id="f-moment" placeholder="Опиши момент, который запомнился" rows="2"></textarea>
     </div>
+
+    <div class="review-choice">
+      <div class="review-choice-heading">
+        <strong>Что сделать с заметками?</strong>
+        <span id="ai-draft-hint">Для Gemini нужно хотя бы 20 символов.</span>
+      </div>
+      <button id="btn-notes-ai" class="review-choice-button ai" type="button" disabled>
+        <span>✦</span><span><strong>Создать с Gemini</strong><small>Свяжет твои мысли в готовую запись</small></span>
+      </button>
+      <button id="btn-notes-self" class="review-choice-button" type="button">
+        <span>✎</span><span><strong>Написать самому</strong><small>Откроется пустой редактор без ИИ</small></span>
+      </button>
+      <button id="btn-notes-save" class="review-choice-save" type="button">Сохранить только оценку</button>
+      <p id="ai-request-status" class="review-copy-help" aria-live="polite"></p>
+    </div>
   </section>
 
-  <!-- Шаг 4: самостоятельная запись или оформление через Gemini -->
+  <!-- Шаг 4: единый редактор готовой записи -->
   <section id="step-3" class="hidden">
     <div class="review-intro">
-      <h2>Как хочешь написать?</h2>
-      <p>Твой текст всегда можно поправить перед сохранением.</p>
+      <span id="review-editor-source" class="review-editor-source">Твой текст</span>
+      <h2 id="review-editor-title">Отредактируй запись</h2>
+      <p>Проверь формулировки — запись сохранится только после твоего подтверждения.</p>
     </div>
 
-    <div class="review-mode" role="group" aria-label="Способ написания записи">
-      <button id="btn-mode-self" class="review-mode-button is-active" type="button" aria-pressed="true">
-        <span>✎</span><strong>Написать самому</strong><small>Без ИИ и без сети</small>
-      </button>
-      <button id="btn-mode-ai" class="review-mode-button" type="button" aria-pressed="false">
-        <span>✦</span><strong>Оформить с Gemini</strong><small>Gemini свяжет твои мысли</small>
-      </button>
-    </div>
-
-    <div id="review-self-panel" class="review-panel">
+    <div class="review-panel">
       <label class="review-field" for="e-review">
-        <span>Твоя запись</span>
-        <textarea id="e-review" placeholder="Напиши, что осталось после фильма…" rows="8"></textarea>
+        <span>Текст записи</span>
+        <textarea id="e-review" maxlength="3000" placeholder="Напиши, что осталось после фильма…" rows="11"></textarea>
       </label>
-      <p class="review-privacy">Текст сохранится как есть. Ничего никуда не отправляется.</p>
-    </div>
-
-    <div id="review-ai-panel" class="review-panel hidden">
-      <label class="review-field" for="e-ai-draft">
-        <span>Черновые мысли</span>
-        <textarea id="e-ai-draft" maxlength="2000" placeholder="Например: понравилась музыка, финал показался затянутым, запомнилась сцена…" rows="6"></textarea>
-      </label>
-      <div class="review-draft-meta">
-        <span id="ai-draft-hint">Напиши хотя бы 20 символов — Gemini не будет придумывать текст из ничего.</span>
-        <span><b id="ai-draft-count">0</b>/2000</span>
-      </div>
-      <button id="btn-generate" class="copy-btn" type="button" disabled>Создать с Gemini</button>
-      <p id="ai-request-status" class="review-copy-help" aria-live="polite">Gemini использует только твои заметки и не сохраняет запись автоматически.</p>
-
-      <label class="review-field review-result-field" for="e-ai-result">
-        <span>Результат Gemini</span>
-        <textarea id="e-ai-result" placeholder="Здесь появится текст. Его можно отредактировать перед сохранением." rows="7"></textarea>
-      </label>
+      <div class="review-editor-meta"><span id="review-editor-count">0</span>/3000</div>
     </div>
 
     <div class="review-save-error">
@@ -322,6 +311,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui16"></script>
+<script src="app.js?v=ui18"></script>
 </body>
 </html>
