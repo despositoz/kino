@@ -766,9 +766,11 @@ function readRecentMovies() {
 }
 
 function rememberMovie(movie) {
-  const recent = readRecentMovies().filter((item) => Number(item.id) !== Number(movie.id));
-  recent.unshift(movie);
-  localStorage.setItem(RECENT_MOVIES_KEY, JSON.stringify(recent.slice(0, 5)));
+  try {
+    const recent = readRecentMovies().filter((item) => Number(item.id) !== Number(movie.id));
+    recent.unshift(movie);
+    localStorage.setItem(RECENT_MOVIES_KEY, JSON.stringify(recent.slice(0, 5)));
+  } catch (_) { /* недавние фильмы — необязательный локальный кэш */ }
 }
 
 function setSearchLoading(loading) {
@@ -1053,8 +1055,8 @@ async function searchMovies(query) {
       renderedSearchMovies = [];
       renderSearchMessage(
         "Ничего не найдено",
-        `Не удалось найти фильм «${query}». Проверь написание.`,
-        { label: "Очистить запрос", run: clearSearchQuery },
+        `Не удалось найти фильм «${query}». Проверь написание или добавь его вручную.`,
+        { label: "Добавить вручную", run: () => addMovieManually(query) },
       );
     }
   } catch (e) {
@@ -1062,8 +1064,8 @@ async function searchMovies(query) {
     clearTimeout(searchSkeletonTimer);
     renderSearchMessage(
       "Не удалось выполнить поиск",
-      "Проверь подключение и попробуй снова.",
-      { label: "Повторить", run: () => searchMovies(query) },
+      "Проверь подключение или добавь фильм вручную.",
+      { label: "Добавить вручную", run: () => addMovieManually(query) },
     );
   } finally {
     if (searchController === controller) searchController = null;
@@ -1075,6 +1077,17 @@ function clearSearchQuery() {
   $("f-query").value = "";
   onQueryInput();
   $("f-query").focus();
+}
+
+function addMovieManually(title) {
+  form = emptyForm();
+  form.title = title.trim();
+  editingEntryId = null;
+  editingOriginalDate = "";
+  duplicatePendingMovie = null;
+  duplicatePendingEntry = null;
+  showSelectedMovie(false);
+  haptic("impact", "soft");
 }
 
 async function loadPopular() {
@@ -1774,9 +1787,17 @@ function filmItem(f) {
     const del = el("button", "linkbtn danger", "Удалить");
     del.addEventListener("click", async () => {
       if (!(await confirmAsk(`Удалить запись «${f.title}»?`))) return;
-      await store.remove(f.id);
-      expandedId = null;
-      renderDiary();
+      try {
+        await store.remove(f.id);
+        expandedId = null;
+        await renderDiary();
+        haptic("notification", "success");
+      } catch (error) {
+        const message = "Не удалось удалить запись. Попробуй ещё раз.";
+        if (inTelegram && typeof tg.showAlert === "function") tg.showAlert(message);
+        else window.alert(message);
+        haptic("notification", "error");
+      }
     });
     actions.append(exp, del);
     detail.append(actions);
