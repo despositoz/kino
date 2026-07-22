@@ -4,13 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Кинодневник</title>
+<meta name="description" content="Личный кинодневник: оценки, короткие записи и история просмотренного.">
+<meta name="theme-color" content="#F2F2F7">
+<meta name="kino-ai-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/review">
+<meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <!-- После публикации Worker вставь сюда его адрес вида https://kino-ai-review.<subdomain>.workers.dev/review -->
-  <script>window.KINO_AI_ENDPOINT = "https://kino-ai-review.despositoz-kino.workers.dev/review";</script>
-  <link rel="stylesheet" href="style.css?v=ui18">
+<link rel="stylesheet" href="style.css?v=ui19">
 </head>
 <body>
+
+<a class="skip-link" href="#screen-feed">К основному содержимому</a>
 
 <!-- Название приложения в зоне нативных кнопок Telegram (Закрыть / ⋯) —
      видно на всех вкладках, не перекрывает их: сидит между кнопками. -->
@@ -23,12 +27,11 @@
 <header id="header">
   <div id="head-rate" class="hidden">
     <div class="head-row">
-      <button id="btn-back" class="back-btn hidden" aria-label="Назад"><span class="chev"></span></button>
+      <button id="btn-back" class="back-btn" type="button" aria-label="Назад"><span class="chev"></span></button>
       <div>
         <div id="head-title" class="head-title">Фильм</div>
         <div id="head-sub" class="head-sub">Шаг 1 из 4</div>
       </div>
-      <button id="btn-close-rate" class="close-rate-btn" type="button" aria-label="Закрыть оценку">×</button>
     </div>
     <div id="progress" class="progress"><i></i><i></i><i></i><i></i></div>
   </div>
@@ -247,28 +250,31 @@
 </main>
 
 <!-- ─── Первый запуск ─── -->
-<div id="onboarding" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-  <div class="onboarding-card">
-    <div id="onboarding-step-1">
-      <span class="eyebrow">Настроим ленту</span>
-      <h2 id="onboarding-title">Что тебе нравится смотреть?</h2>
-      <p>Можно выбрать несколько жанров.</p>
-      <div id="onboarding-genres" class="genre-chips"></div>
-      <button id="btn-onboarding-next" class="primary" type="button">Далее</button>
-    </div>
-    <div id="onboarding-step-2" class="hidden">
-      <span class="eyebrow">Последний вопрос</span>
-      <h2>Как часто ты смотришь кино?</h2>
-      <div id="onboarding-frequency" class="frequency-list">
-        <button type="button" data-frequency="daily">Почти каждый день</button>
-        <button type="button" data-frequency="often">Пару раз в неделю</button>
-        <button type="button" data-frequency="sometimes">Иногда</button>
-        <button type="button" data-frequency="rarely">Редко</button>
+<section id="onboarding" class="onboarding-screen hidden" aria-labelledby="onboarding-title">
+  <div class="onboarding-shell">
+    <div class="onboarding-brand" aria-hidden="true">SYO</div>
+    <div class="onboarding-card">
+      <div id="onboarding-step-1">
+        <span class="eyebrow">Твой кинодневник</span>
+        <h2 id="onboarding-title" tabindex="-1">Что тебе нравится смотреть?</h2>
+        <p>Выбери несколько жанров — так первые рекомендации будут точнее.</p>
+        <div id="onboarding-genres" class="genre-chips"></div>
+        <button id="btn-onboarding-next" class="primary" type="button">Продолжить</button>
       </div>
-      <button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button>
+      <div id="onboarding-step-2" class="hidden">
+        <span class="eyebrow">Последний вопрос</span>
+        <h2 id="onboarding-frequency-title" tabindex="-1">Как часто ты смотришь кино?</h2>
+        <div id="onboarding-frequency" class="frequency-list">
+          <button type="button" data-frequency="daily">Почти каждый день</button>
+          <button type="button" data-frequency="often">Пару раз в неделю</button>
+          <button type="button" data-frequency="sometimes">Иногда</button>
+          <button type="button" data-frequency="rarely">Редко</button>
+        </div>
+        <button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button>
+      </div>
     </div>
   </div>
-</div>
+</section>
 
 <!-- ─── Повторный выбор уже оценённого фильма ─── -->
 <dialog id="duplicate-dialog" class="duplicate-dialog">
@@ -286,6 +292,17 @@
   <p>До четырёх из твоего дневника.</p>
   <div id="favorites-picker-list" class="favorites-picker-list"></div>
   <button id="btn-favorites-done" class="primary" type="button">Готово</button>
+</dialog>
+
+<!-- ─── Выход из незаконченной оценки ─── -->
+<dialog id="exit-rate-dialog" class="duplicate-dialog exit-rate-dialog">
+  <div class="dialog-mark">←</div>
+  <h2>Выйти из оценки?</h2>
+  <p>Выбранный фильм, оценки и заметки не сохранятся.</p>
+  <div class="dialog-actions">
+    <button id="btn-exit-rate" class="danger-button" type="button">Выйти без сохранения</button>
+    <button id="btn-stay-rate" class="primary" type="button">Продолжить оценку</button>
+  </div>
 </dialog>
 
 <!-- ─── Низ: главная кнопка шага + вкладки ─── -->
@@ -311,6 +328,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui18"></script>
+<script src="app.js?v=ui19"></script>
 </body>
 </html>

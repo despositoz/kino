@@ -61,7 +61,6 @@ function syncTelegramInsets() {
   // Telegram и CSS сами сообщают safe area; не подгоняем отступ под модель iPhone.
   const extraInset = Math.max(0, measuredInset - cssInset);
   document.documentElement.style.setProperty("--telegram-header-inset", `${extraInset}px`);
-  if (stableHeight) document.documentElement.style.setProperty("--stable-viewport-height", `${stableHeight}px`);
 }
 
 syncTelegramInsets();
@@ -229,6 +228,23 @@ async function saveProfileData(value) {
   else localStorage.setItem(PROFILE_KEY, raw);
 }
 
+async function loadFeedInsightCache() {
+  let raw = "";
+  try {
+    if (useCloud) raw = (await cloud.getItems([AI_FEED_KEY]))[AI_FEED_KEY] || "";
+    else raw = localStorage.getItem(AI_FEED_KEY) || "";
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function saveFeedInsightCache(value) {
+  const raw = JSON.stringify(value);
+  if (useCloud) await cloud.set(AI_FEED_KEY, raw);
+  else localStorage.setItem(AI_FEED_KEY, raw);
+}
+
 async function applyResetRequest() {
   const url = new URL(window.location.href);
   if (url.searchParams.get("reset") !== "1") return null;
@@ -286,6 +302,7 @@ let profileBaseline = "";
 let searchLayoutBottom = window.visualViewport
   ? window.visualViewport.offsetTop + window.visualViewport.height
   : window.innerHeight;
+let layoutViewportHeight = Math.max(window.innerHeight, window.visualViewport?.height || 0);
 let popularLoaded = false;
 let recommendationsLoaded = false;
 let popularMovies = [];
@@ -311,9 +328,17 @@ const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 const SEARCH_CACHE = new Map();
 const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
 const REVIEW_DRAFT_KEY = "kino_review_draft_v1";
+const AI_FEED_KEY = "kino_ai_feed_v1";
 const AI_MIN_DRAFT_CHARS = 20;
-const AI_REVIEW_ENDPOINT = String(window.KINO_AI_ENDPOINT || "").trim();
+const AI_REVIEW_ENDPOINT = String(
+  document.querySelector('meta[name="kino-ai-endpoint"]')?.content || ""
+).trim();
+const AI_FEED_ENDPOINT = String(
+  document.querySelector('meta[name="kino-ai-feed-endpoint"]')?.content || ""
+).trim();
 let geminiRequestController = null;
+let aiFeedRequestController = null;
+let feedRenderRevision = 0;
 
 // ─── Черновик рецензии и Gemini ─────────────────────────────────
 
@@ -841,6 +866,7 @@ function syncRateHeader() {
   $("head-sub").textContent = `Шаг ${step + 1} из 4`;
   $("head-sub").classList.toggle("hidden", isEntry);
   $("progress").classList.toggle("hidden", isEntry);
+  $("btn-back").setAttribute("aria-label", step === 0 ? "Выйти из оценки" : "Назад");
 }
 
 
@@ -853,7 +879,6 @@ function showStep(n) {
   syncRateHeader();
   const segs = $("progress").children;
   for (let i = 0; i < segs.length; i++) segs[i].classList.toggle("on", i <= n);
-  $("btn-back").classList.toggle("hidden", n === 0);
   syncAtmosphere();
 
   const primary = $("btn-primary");
@@ -1024,6 +1049,16 @@ function syncSearchViewport() {
   document.documentElement.style.setProperty("--search-results-height", `${available}px`);
 }
 
+function syncKeyboardViewport() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const active = document.activeElement;
+  const editingText = active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement;
+  if (!editingText) layoutViewportHeight = Math.max(window.innerHeight, viewportHeight);
+  const keyboardOpen = editingText && layoutViewportHeight - viewportHeight > 90;
+  document.body.classList.toggle("keyboard-open", keyboardOpen);
+}
+
 function setSearchMode(active) {
   clearTimeout(searchBlurTimer);
   const wasActive = document.body.classList.contains("search-active");
@@ -1141,7 +1176,10 @@ function renderPopularMarquee(movies) {
     selection.forEach((movie) => {
       const card = movieCard(movie, true);
       card.dataset.marqueeCopy = String(copy);
-      if (copy !== 1) card.tabIndex = -1;
+      if (copy !== 1) {
+        card.tabIndex = -1;
+        card.setAttribute("aria-hidden", "true");
+      }
       container.append(card);
     });
   }
@@ -1418,8 +1456,18 @@ function clearFilm() {
   editingEntryId = null;
   editingOriginalDate = "";
   ratingCriterionIndex = 0;
-  form.title = ""; form.year = ""; form.tmdbId = null;
-  form.poster = ""; form.posterPreview = ""; form.backdrop = ""; form.backdropPreview = "";
+  reviewMode = "self";
+  form = emptyForm();
+  $("f-query").value = "";
+  $("f-year").value = "";
+  $("f-genre").value = GENRES[0];
+  $("f-liked").value = "";
+  $("f-disliked").value = "";
+  $("f-moment").value = "";
+  $("e-review").value = "";
+  $("sliders").innerHTML = "";
+  buildSliders();
+  syncFeelingCards();
   document.body.classList.remove("hero-image-loaded");
   document.body.style.setProperty("--hero-preview", "none");
   document.body.style.setProperty("--hero-image", "none");
@@ -1430,6 +1478,28 @@ function clearFilm() {
   document.querySelector(".hero-fields").classList.remove("hidden");
   resetSearchView();
   showStep(0);
+}
+
+function leaveRateFlow() {
+  clearFilm();
+  showTab(rateReturnTab === "rate" ? "feed" : rateReturnTab);
+}
+
+function requestRateExit() {
+  closeSearchKeyboard();
+  haptic("impact", "soft");
+  if (!form.title) {
+    leaveRateFlow();
+    return;
+  }
+  $("exit-rate-dialog").showModal();
+  document.body.classList.add("modal-open");
+  haptic("notification", "warning");
+}
+
+function closeRateExitDialog() {
+  if ($("exit-rate-dialog").open) $("exit-rate-dialog").close();
+  document.body.classList.remove("modal-open");
 }
 
 // ─── Шаг 2: слайдеры ─────────────────────────────────────────────
@@ -1719,6 +1789,149 @@ function filmsWord(count) {
   return "фильмов";
 }
 
+function buildFeedStats(films) {
+  const qualityOf = (film) => {
+    const quality = Number(film.quality);
+    return Number.isFinite(quality) ? Math.max(0, Math.min(10, quality)) : 0;
+  };
+  const averages = CRITERIA.map((criterion) => ({
+    criterion: criterion.label,
+    average: Number((films.reduce(
+      (sum, film) => sum + Number(film.scores?.[criterion.id] || 0), 0
+    ) / films.length).toFixed(1)),
+  }));
+
+  const byGenre = new Map();
+  films.forEach((film) => {
+    const genre = String(film.genre || "Другое").trim() || "Другое";
+    if (!byGenre.has(genre)) byGenre.set(genre, []);
+    byGenre.get(genre).push(film);
+  });
+  const genreGroups = [...byGenre.entries()].map(([genre, entries]) => {
+    const latestTimestamp = entries.reduce(
+      (latest, film) => Math.max(latest, filmTimestamp(film)), 0
+    );
+    const best = [...entries].sort((a, b) => qualityOf(b) - qualityOf(a))[0];
+    return { genre, entries, latestTimestamp, best };
+  });
+  const mostFrequent = [...genreGroups].sort((a, b) =>
+    b.entries.length - a.entries.length || b.latestTimestamp - a.latestTimestamp
+  )[0];
+  const longestAbsent = genreGroups.length > 1
+    ? [...genreGroups].filter((group) => group.latestTimestamp)
+      .sort((a, b) => a.latestTimestamp - b.latestTimestamp)[0]
+    : null;
+  const bestByGenre = [...genreGroups]
+    .sort((a, b) => b.entries.length - a.entries.length ||
+      qualityOf(b.best) - qualityOf(a.best))
+    .slice(0, 2)
+    .map((group) => ({
+      genre: group.genre,
+      title: group.best.title,
+      rating: toFive(qualityOf(group.best)),
+      filmsInGenre: group.entries.length,
+    }));
+  const latest = films[0];
+
+  return {
+    total: films.length,
+    averages,
+    ...(mostFrequent ? {
+      mostFrequentGenre: { genre: mostFrequent.genre, count: mostFrequent.entries.length },
+    } : {}),
+    ...(longestAbsent ? {
+      longestAbsentGenre: {
+        genre: longestAbsent.genre,
+        days: Math.max(0, Math.floor((Date.now() - longestAbsent.latestTimestamp) / DAY_MS)),
+      },
+    } : {}),
+    bestByGenre,
+    ...(latest ? {
+      latestFilm: {
+        title: latest.title,
+        genre: latest.genre || "Другое",
+        rating: toFive(qualityOf(latest)),
+      },
+    } : {}),
+  };
+}
+
+function feedCacheFilmId(films) {
+  return String(films[0]?.entryId || films[0]?.id || "");
+}
+
+function isFeedInsightCacheFresh(cache, films) {
+  if (!cache || typeof cache.insight !== "string") return false;
+  const insight = cache.insight.trim();
+  const age = Date.now() - Number(cache.generatedAt || 0);
+  return insight.length > 0 && insight.length <= 600 &&
+    Number(cache.filmsCount) === films.length &&
+    String(cache.lastFilmId || "") === feedCacheFilmId(films) &&
+    age >= 0 && age < DAY_MS;
+}
+
+function aiFeedCard(insight) {
+  const text = insight.trim();
+  const sentences = text.match(/^(.+?[.!?])(?:\s+)(.+)$/s);
+  const title = sentences && sentences[1].length <= 180 ? sentences[1] : text;
+  const detail = sentences && title !== text ? sentences[2] : "";
+  return feedCard({
+    type: "ai",
+    label: "Дневник заметил",
+    title,
+    detail,
+    action: "diary",
+    actionLabel: "Открыть дневник",
+  }, 0);
+}
+
+function insertAiFeedCard(list, insight, revision) {
+  if (revision !== feedRenderRevision || list !== $("feed-list") || !list.isConnected) return;
+  list.querySelector(".feed-card--ai")?.remove();
+  list.prepend(aiFeedCard(insight));
+}
+
+async function maybeRenderAiFeedCard(films, list, revision) {
+  if (films.length < 3) return;
+
+  const cache = await loadFeedInsightCache();
+  if (revision !== feedRenderRevision) return;
+  if (isFeedInsightCacheFresh(cache, films)) {
+    insertAiFeedCard(list, cache.insight, revision);
+    return;
+  }
+  if (!AI_FEED_ENDPOINT) return;
+
+  const controller = new AbortController();
+  aiFeedRequestController = controller;
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(AI_FEED_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stats: buildFeedStats(films) }),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    const insight = typeof data.insight === "string" ? data.insight.trim() : "";
+    if (!response.ok || !insight || insight.length > 600) return;
+
+    const nextCache = {
+      insight,
+      generatedAt: Date.now(),
+      filmsCount: films.length,
+      lastFilmId: feedCacheFilmId(films),
+    };
+    try { await saveFeedInsightCache(nextCache); } catch (_) { /* кеш не блокирует ленту */ }
+    insertAiFeedCard(list, insight, revision);
+  } catch (_) {
+    // AI-инсайт необязательный: при сети, лимите или таймауте обычная лента остаётся как есть.
+  } finally {
+    clearTimeout(timeout);
+    if (aiFeedRequestController === controller) aiFeedRequestController = null;
+  }
+}
+
 function feedInsights(films) {
   const now = Date.now();
   const insights = [];
@@ -1872,6 +2085,9 @@ function startReevaluation(film) {
 }
 
 async function renderFeed() {
+  const revision = ++feedRenderRevision;
+  aiFeedRequestController?.abort();
+  aiFeedRequestController = null;
   const list = $("feed-list");
   list.innerHTML = "";
   let films;
@@ -1901,6 +2117,7 @@ async function renderFeed() {
   }
 
   feedInsights(films).forEach((insight, index) => list.append(feedCard(insight, index)));
+  void maybeRenderAiFeedCard(films, list, revision);
 }
 
 // ─── Дневник: статистика и записи ────────────────────────────────
@@ -2244,12 +2461,21 @@ function buildOnboarding() {
   });
 }
 
+function setOnboardingActive(active) {
+  document.body.classList.toggle("onboarding-open", active);
+  document.querySelectorAll("#brand-mark, #pull-refresh, #header, .app-screen, #footer").forEach((node) => {
+    node.toggleAttribute("inert", active);
+    node.setAttribute("aria-hidden", String(active));
+  });
+}
+
 function showOnboarding() {
   buildOnboarding();
   $("onboarding-step-1").classList.remove("hidden");
   $("onboarding-step-2").classList.add("hidden");
   $("onboarding").classList.remove("hidden");
-  document.body.classList.add("modal-open");
+  setOnboardingActive(true);
+  requestAnimationFrame(() => $("onboarding-title").focus());
 }
 
 async function finishOnboarding() {
@@ -2262,7 +2488,7 @@ async function finishOnboarding() {
   };
   await saveProfileData(profile);
   $("onboarding").classList.add("hidden");
-  document.body.classList.remove("modal-open");
+  setOnboardingActive(false);
   syncProfileAvatar();
   recommendationsLoaded = false;
   loadRecommendations();
@@ -2286,8 +2512,10 @@ function rubberbandPull(distance) {
 
 function canStartPull(target) {
   if (pullRefreshing || tab === "rate" || window.scrollY > 0) return false;
-  if (document.body.classList.contains("modal-open") || document.body.classList.contains("search-active")) return false;
-  return !target.closest("input, textarea, select, dialog, .overlay");
+  if (document.body.classList.contains("modal-open") ||
+      document.body.classList.contains("onboarding-open") ||
+      document.body.classList.contains("search-active")) return false;
+  return !target.closest("input, textarea, select, dialog, .onboarding-screen");
 }
 
 function setPullDistance(distance) {
@@ -2360,7 +2588,7 @@ document.addEventListener("touchstart", (event) => {
 document.addEventListener("touchmove", (event) => {
   if (event.touches.length !== 1) return;
   const clientY = event.touches[0].clientY;
-  const innerScroller = event.target.closest("#results, .overlay, dialog");
+  const innerScroller = event.target.closest("#results, .onboarding-screen, dialog");
   const innerCanMove = innerScroller && innerScroller.scrollTop > 0;
   const blocksTelegramCollapse = window.scrollY <= 0 && clientY - touchGuardStartY > 4 && !innerCanMove;
   if (movePull(clientY) || blocksTelegramCollapse) event.preventDefault();
@@ -2396,20 +2624,18 @@ $("btn-search-cancel").addEventListener("click", () => {
   resetSearchView();
 });
 if (window.visualViewport) {
-  window.visualViewport.addEventListener("resize", syncSearchViewport);
-  window.visualViewport.addEventListener("scroll", syncSearchViewport);
+  ["resize", "scroll"].forEach((event) => window.visualViewport.addEventListener(event, () => {
+    syncSearchViewport();
+    syncKeyboardViewport();
+  }));
 }
 $("btn-clear").addEventListener("click", clearFilm);
 $("btn-hero-primary").addEventListener("click", () => $("btn-primary").click());
-$("btn-close-rate").addEventListener("click", () => {
-  closeSearchKeyboard();
-  haptic("impact", "soft");
-  showTab(rateReturnTab === "rate" ? "feed" : rateReturnTab);
-});
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
-  if (step === 1 && ratingCriterionIndex > 0) moveRatingCriterion(ratingCriterionIndex - 1);
-  else if (step === 1) clearFilm();
+  if (step === 0) requestRateExit();
+  else if (step === 1 && ratingCriterionIndex > 0) moveRatingCriterion(ratingCriterionIndex - 1);
+  else if (step === 1) showStep(0);
   else showStep(step - 1);
 });
 $("search-scrim").addEventListener("click", () => {
@@ -2481,12 +2707,33 @@ $("btn-favorites-done").addEventListener("click", async () => {
   await renderProfileFavorites();
   syncProfileDirty();
 });
+$("btn-exit-rate").addEventListener("click", () => {
+  closeRateExitDialog();
+  leaveRateFlow();
+});
+$("btn-stay-rate").addEventListener("click", closeRateExitDialog);
+$("exit-rate-dialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeRateExitDialog();
+});
 
 $("btn-profile-save").addEventListener("click", saveProfileFromForm);
 $("profile-bio").addEventListener("input", () => {
   $("profile-bio-count").textContent = $("profile-bio").value.length;
   syncProfileDirty();
 });
+document.addEventListener("focusin", (event) => {
+  syncKeyboardViewport();
+  if (tab !== "rate" || !(event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement)) return;
+  setTimeout(() => {
+    syncKeyboardViewport();
+    if (document.body.classList.contains("keyboard-open")) {
+      event.target.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, 180);
+});
+document.addEventListener("focusout", () => setTimeout(syncKeyboardViewport, 120));
 $("btn-onboarding-next").addEventListener("click", () => {
   if (!selectedOnboardingGenres.size) {
     $("onboarding-genres").classList.add("needs-choice");
@@ -2495,6 +2742,7 @@ $("btn-onboarding-next").addEventListener("click", () => {
   }
   $("onboarding-step-1").classList.add("hidden");
   $("onboarding-step-2").classList.remove("hidden");
+  requestAnimationFrame(() => $("onboarding-frequency-title").focus());
 });
 document.querySelectorAll("#onboarding-frequency button").forEach((button) => {
   button.addEventListener("click", () => {
