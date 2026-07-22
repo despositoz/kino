@@ -116,7 +116,6 @@ const TMDB_GENRES = {
   28: "Боевик", 35: "Комедия", 9648: "Детектив", 14: "Фэнтези",
   16: "Анимация", 99: "Документальный",
 };
-const TMDB_GENRE_IDS = Object.fromEntries(Object.entries(TMDB_GENRES).map(([id, name]) => [name, id]));
 const PROFILE_KEY = "kino_profile_v1";
 const TRENDING_CACHE_KEY = "tmdb_trending_day_v1";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -162,8 +161,26 @@ const cloud = {
 
 const useCloud = inTelegram && tg.CloudStorage && tg.isVersionAtLeast("6.9");
 
+function movieStorageIdentity(film) {
+  const movieId = Number(film?.movieId || film?.tmdbId);
+  if (movieId) return `tmdb:${movieId}`;
+  const title = normalizeTitle(String(film?.title || ""));
+  return title ? `manual:${title}:${String(film?.year || "")}` : "";
+}
+
+function uniqueLatestFilms(films) {
+  const seen = new Set();
+  return films.filter((film) => {
+    const identity = movieStorageIdentity(film);
+    if (!identity) return true;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 const store = {
-  async getAll() {
+  async getAll({ includeDuplicates = false } = {}) {
     let raw = [];
     if (useCloud) {
       const keys = (await cloud.getKeys()).filter((k) => k.startsWith("film_"));
@@ -182,18 +199,38 @@ const store = {
         films.push({ ...saved, id: entryId, entryId, movieId: saved.movieId || saved.tmdbId || null });
       } catch (e) { /* битую запись пропускаем */ }
     }
-    return films.sort((a, b) => b.entryId - a.entryId); // новые сверху
+    const sorted = films.sort((a, b) => b.entryId - a.entryId); // новые сверху
+    if (includeDuplicates) return sorted;
+    return uniqueLatestFilms(sorted);
   },
   async save(film) {
     const entryId = film.entryId || film.id;
     const k = "film_" + entryId, v = JSON.stringify({ ...film, id: entryId, entryId });
     if (useCloud) await cloud.set(k, v);
     else localStorage.setItem(k, v);
+
+    const identity = movieStorageIdentity(film);
+    if (!identity) return;
+    try {
+      const copies = await this.getAll({ includeDuplicates: true });
+      await Promise.all(copies
+        .filter((copy) => movieStorageIdentity(copy) === identity &&
+          String(copy.entryId || copy.id) !== String(entryId))
+        .map((copy) => this.remove(copy.entryId || copy.id)));
+    } catch (_) { /* новая запись уже сохранена; старую копию просто скроет getAll */ }
   },
   async remove(id) {
     const k = "film_" + id;
     if (useCloud) await cloud.remove(k);
     else localStorage.removeItem(k);
+  },
+  async removeFilm(film) {
+    const identity = movieStorageIdentity(film);
+    if (!identity) return this.remove(film.entryId || film.id);
+    const copies = await this.getAll({ includeDuplicates: true });
+    await Promise.all(copies
+      .filter((copy) => movieStorageIdentity(copy) === identity)
+      .map((copy) => this.remove(copy.entryId || copy.id)));
   },
   async clearAll() {
     let keys = [];
@@ -1282,6 +1319,31 @@ function renderRecommendations(container, movies) {
   });
 }
 
+function mixRecommendationGroups(groups, ratedIds, limit = 20) {
+  const queues = groups.map((group) => [...group]);
+  const seen = new Set(ratedIds);
+  const mixed = [];
+
+  while (mixed.length < limit) {
+    let addedInRound = false;
+    for (const queue of queues) {
+      let movie = null;
+      while (queue.length && !movie) {
+        const candidate = queue.shift();
+        if (!candidate?.title || candidate.adult || seen.has(Number(candidate.id))) continue;
+        movie = candidate;
+      }
+      if (!movie) continue;
+      seen.add(Number(movie.id));
+      mixed.push(movie);
+      addedInRound = true;
+      if (mixed.length >= limit) break;
+    }
+    if (!addedInRound) break;
+  }
+  return mixed;
+}
+
 function normalizePopularPosition(container) {
   const segment = Number(container.dataset.segmentWidth || 0);
   if (!segment) return;
@@ -1461,50 +1523,31 @@ async function loadRecommendations(refresh = false) {
   try {
     const films = await store.getAll();
     const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
-    const ratedSeeds = films
+    const seeds = [...new Map(films
       .filter((film) => Number(film.movieId || film.tmdbId))
-      .sort((a, b) => {
-        const scoreA = Number(a.quality || 0) + Number(a.personal || 0);
-        const scoreB = Number(b.quality || 0) + Number(b.personal || 0);
-        return scoreB - scoreA;
-      });
-    const favoriteSeeds = ratedSeeds.filter(
-      (film) => Number(film.quality || 0) >= 7 || Number(film.personal || 0) >= 7
+      .map((film) => [Number(film.movieId || film.tmdbId), film])).values()]
+      .slice(0, 8);
+    if (!seeds.length) {
+      recommendationsLoaded = false;
+      $("recommended").classList.add("hidden");
+      return;
+    }
+
+    const start = (recommendationPage - 1) % seeds.length;
+    const activeSeeds = Array.from(
+      { length: Math.min(4, seeds.length) },
+      (_, index) => seeds[(start + index) % seeds.length],
     );
-    const seeds = (favoriteSeeds.length ? favoriteSeeds : ratedSeeds).slice(0, 4);
-    let choices = [];
-
-    if (seeds.length) {
-      const seed = seeds[(recommendationPage - 1) % seeds.length];
-      const apiPage = Math.floor((recommendationPage - 1) / seeds.length) % 3 + 1;
+    const apiPage = Math.floor((recommendationPage - 1) / seeds.length) % 3 + 1;
+    const responses = await Promise.allSettled(activeSeeds.map((seed) => {
       const seedId = Number(seed.movieId || seed.tmdbId);
-      const data = await tmdb(`/movie/${seedId}/recommendations?page=${apiPage}`);
-      choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
-    }
+      return tmdb(`/movie/${seedId}/recommendations?page=${apiPage}`);
+    }));
+    const groups = responses
+      .filter((response) => response.status === "fulfilled")
+      .map((response) => response.value.results || []);
+    const choices = mixRecommendationGroups(groups, ratedIds);
 
-    // Для нового дневника или пустой выдачи оставляем жанровый запасной вариант.
-    if (!choices.length) {
-      const genreScores = new Map();
-      films.forEach((film) => {
-        const weight = Math.max(1, Number(film.quality || 5));
-        genreScores.set(film.genre, (genreScores.get(film.genre) || 0) + weight);
-      });
-      (profile.genres || []).forEach(
-        (genre) => genreScores.set(genre, (genreScores.get(genre) || 0) + 6)
-      );
-      const genres = [...genreScores.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([genre]) => TMDB_GENRE_IDS[genre])
-        .filter(Boolean)
-        .slice(0, 3);
-      if (!genres.length) {
-        recommendationsLoaded = false;
-        $("recommended").classList.add("hidden");
-        return;
-      }
-      const data = await tmdb(`/discover/movie?sort_by=popularity.desc&vote_count.gte=150&with_genres=${genres.join("|")}&page=${recommendationPage}`);
-      choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
-    }
     renderRecommendations($("recommended-list"), choices);
     recommendationsLoaded = choices.length > 0;
     $("recommended").classList.toggle("hidden", !recommendationsLoaded || !!$("f-query").value.trim());
@@ -1608,8 +1651,8 @@ function editExistingEntry(film, movie = null) {
 function rerateExistingEntry(film, movie = null) {
   duplicatePendingMovie = null;
   duplicatePendingEntry = null;
-  editingEntryId = null;
-  editingOriginalDate = "";
+  editingEntryId = film.entryId || film.id;
+  editingOriginalDate = film.date || "";
   fillFormFromEntry(film, false);
   if (movie) applyCatalogMovie(movie);
   showTab("rate");
@@ -2826,7 +2869,7 @@ function filmItem(f) {
     del.addEventListener("click", async () => {
       if (!(await confirmAsk(`Удалить запись «${f.title}»?`))) return;
       try {
-        await store.remove(f.id);
+        await store.removeFilm(f);
         expandedId = null;
         await renderDiary();
         haptic("notification", "success");
@@ -3032,7 +3075,7 @@ function buildOnboarding() {
 
 function setOnboardingActive(active) {
   document.body.classList.toggle("onboarding-open", active);
-  document.querySelectorAll("#brand-mark, #pull-refresh, #header, .app-screen, #footer").forEach((node) => {
+  document.querySelectorAll("#pull-refresh, #header, .app-screen, #footer").forEach((node) => {
     node.toggleAttribute("inert", active);
     node.setAttribute("aria-hidden", String(active));
   });

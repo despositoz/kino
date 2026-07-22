@@ -10,15 +10,12 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=ui32">
+<link rel="stylesheet" href="style.css?v=ui35">
 </head>
 <body>
 
 <a class="skip-link" href="#screen-feed">К основному содержимому</a>
 
-<!-- Название приложения в зоне нативных кнопок Telegram (Закрыть / ⋯):
-     видно на всех вкладках, не перекрывает их: сидит между кнопками. -->
-<div id="brand-mark" aria-hidden="true">SYO</div>
 <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
   <span class="pull-refresh-icon"></span>
 </div>
@@ -74,7 +71,7 @@
         <div id="popular-list"></div>
       </div>
       <div id="recommended" class="hidden">
-        <div class="sec-label pop-label">Возможно, ты смотрел</div>
+        <div class="sec-label pop-label">По фильмам из твоего дневника</div>
         <div id="recommended-list" aria-live="polite" aria-busy="false"></div>
       </div>
     </div>
@@ -290,7 +287,7 @@
 <dialog id="duplicate-dialog" class="duplicate-dialog">
   <div class="dialog-mark">↺</div>
   <h2>Ты уже оценивал этот фильм.</h2>
-  <p>Хочешь отредактировать оценку или оценить заново?</p>
+  <p>Можно сохранить старые заметки или начать оценку заново. Запись в дневнике останется одна.</p>
   <div class="dialog-actions">
     <button id="btn-edit-existing" class="primary" type="button">Редактировать</button>
     <button id="btn-rerate-existing" class="secondary" type="button">Оценить заново</button>
@@ -338,6 +335,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui32"></script>
+<script src="app.js?v=ui35"></script>
 </body>
 </html>

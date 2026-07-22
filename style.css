@@ -866,21 +866,6 @@ body.immersive:not(.hero) #footer-action {
 :root { --telegram-header-inset: 0px; }
 html, body { background-color: var(--bg); }
 #header { position: relative; z-index: 30; padding-top: calc(22px + var(--top-safe) + var(--telegram-header-inset)); }
-/* Ряд нативных кнопок Telegram (Закрыть слева, ⋯ справа) в fullscreen
-   лежит внутри того же отступа, что и padding-top у #header — кладём
-   название аппа в тот же отступ, у его нижнего края (ближе к кнопкам),
-   так оно не пустует и гарантированно не залезает на заголовок ни в
-   Telegram, ни в обычном браузере (там этот отступ просто маленький). */
-#brand-mark {
-  position: fixed;
-  top: calc(var(--top-safe) + var(--telegram-header-inset) + 8px);
-  left: 0; right: 0; z-index: 40; pointer-events: none;
-  height: 20px; display: flex; align-items: center; justify-content: center;
-  padding: 0; transform: none !important; will-change: auto;
-  font: 750 11px/1 var(--font-sans); letter-spacing: .2em;
-  color: var(--sub);
-}
-body.hero #brand-mark, body.immersive #brand-mark { color: rgba(255,255,255,.72); }
 #popular, #recommended { margin-top: 24px; }
 #recommended { margin-top: 20px; }
 .sec-label.pop-label { font: 700 18px/1.15 var(--font-display); letter-spacing: -.02em; }
