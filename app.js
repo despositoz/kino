@@ -239,6 +239,10 @@ function normalizeStoredFeedFact(value) {
     sourceTitle: typeof value.sourceTitle === "string" ? value.sourceTitle.trim().slice(0, 140) : "",
     sourceDirector: typeof value.sourceDirector === "string" ? value.sourceDirector.trim().slice(0, 100) : "",
     sourceMovieId: Number(value.sourceMovieId) || 0,
+    posterTitle: typeof value.posterTitle === "string" ? value.posterTitle.trim().slice(0, 140) : "",
+    posterMovieId: Number(value.posterMovieId) || 0,
+    poster: typeof value.poster === "string" ? value.poster.trim().slice(0, 240) : "",
+    posterPreview: typeof value.posterPreview === "string" ? value.posterPreview.trim().slice(0, 240) : "",
     generatedAt: Number(value.generatedAt) || Date.now(),
     filmsCount: Number(value.filmsCount) || 0,
     lastFilmId: String(value.lastFilmId || ""),
@@ -2147,7 +2151,12 @@ function directorCreditOf(details) {
 }
 
 function catalogSource(details, fallbackFilm, director) {
+  const movieId = Number(details.id || fallbackFilm.movieId || fallbackFilm.tmdbId) || 0;
+  const poster = details.poster_path
+    ? tmdbPoster(details.poster_path, "w500")
+    : (fallbackFilm.poster || "");
   return {
+    id: movieId,
     title: details.title || fallbackFilm.title,
     originalTitle: details.original_title || "",
     year: Number(yearOf(details) || fallbackFilm.year),
@@ -2160,6 +2169,10 @@ function catalogSource(details, fallbackFilm, director) {
     collection: details.belongs_to_collection?.name || "",
     tmdbRating: Number(details.vote_average) || 0,
     tmdbVoteCount: Number(details.vote_count) || 0,
+    poster,
+    posterPreview: details.poster_path
+      ? tmdbPoster(details.poster_path, "w92")
+      : (fallbackFilm.posterPreview || microPreview(poster, "w92")),
   };
 }
 
@@ -2177,7 +2190,31 @@ function otherDirectorFilms(credits, sourceId, ratedIds) {
     .sort((a, b) => Number(b.vote_count || 0) - Number(a.vote_count || 0) ||
       Number(b.popularity || 0) - Number(a.popularity || 0))
     .slice(0, 6)
-    .map((movie) => ({ title: movie.title, year: Number(yearOf(movie)) }));
+    .map((movie) => ({
+      id: Number(movie.id) || 0,
+      title: movie.title,
+      year: Number(yearOf(movie)),
+      poster: tmdbPoster(movie.poster_path, "w500"),
+      posterPreview: tmdbPoster(movie.poster_path, "w92"),
+    }));
+}
+
+async function buildFeedCatalogForFilm(film, ratedIds) {
+  const movieId = Number(film.movieId || film.tmdbId);
+  if (!movieId) return null;
+  const details = await loadMovieDetails(movieId);
+  if (!details) return null;
+  const director = directorCreditOf(details);
+  let related = [];
+  if (director) {
+    const credits = await loadDirectorMovies(director.id).catch(() => null);
+    related = otherDirectorFilms(credits, movieId, ratedIds);
+  }
+  return {
+    source: catalogSource(details, film, director),
+    sourceMovieId: movieId,
+    otherFilmsByDirector: related,
+  };
 }
 
 async function buildFeedCatalog(films, facts = []) {
@@ -2193,26 +2230,70 @@ async function buildFeedCatalog(films, facts = []) {
 
   for (let offset = 0; offset < candidates.length; offset++) {
     const film = candidates[(start + offset) % candidates.length];
-    const movieId = Number(film.movieId || film.tmdbId);
     try {
-      const details = await loadMovieDetails(movieId);
-      if (!details) continue;
-      const director = directorCreditOf(details);
-      let related = [];
-      if (director) {
-        const credits = await loadDirectorMovies(director.id).catch(() => null);
-        related = otherDirectorFilms(credits, movieId, ratedIds);
-      }
-      return {
-        source: catalogSource(details, film, director),
-        sourceMovieId: movieId,
-        otherFilmsByDirector: related,
-      };
+      const catalog = await buildFeedCatalogForFilm(film, ratedIds);
+      if (catalog) return catalog;
     } catch (_) {
       // Пробуем следующую запись: один недоступный фильм не должен ломать всю ленту.
     }
   }
   return null;
+}
+
+function feedFactArtwork(catalog, insight) {
+  const normalizedInsight = normalizeTitle(insight || "");
+  const mentionedFilm = [...(catalog.otherFilmsByDirector || [])]
+    .sort((a, b) => normalizeTitle(b.title || "").length - normalizeTitle(a.title || "").length)
+    .find((film) => {
+      const title = normalizeTitle(film.title || "");
+      return title.length >= 3 && normalizedInsight.includes(title);
+    });
+  const film = mentionedFilm || catalog.source || {};
+  return {
+    posterTitle: film.title || "",
+    posterMovieId: Number(film.id || catalog.sourceMovieId) || 0,
+    poster: film.poster || "",
+    posterPreview: film.posterPreview || microPreview(film.poster || "", "w92"),
+  };
+}
+
+async function hydrateFeedFactArtwork(facts, films) {
+  const missing = facts.filter((fact) => !fact.poster && Number(fact.sourceMovieId));
+  if (!missing.length) return facts;
+
+  const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
+  const filmsByMovieId = new Map(films.map(
+    (film) => [Number(film.movieId || film.tmdbId), film]
+  ));
+  let changed = false;
+  const hydrated = [];
+
+  for (const fact of facts) {
+    if (fact.poster || !Number(fact.sourceMovieId)) {
+      hydrated.push(fact);
+      continue;
+    }
+    const sourceFilm = filmsByMovieId.get(Number(fact.sourceMovieId));
+    if (!sourceFilm) {
+      hydrated.push(fact);
+      continue;
+    }
+    try {
+      const catalog = await buildFeedCatalogForFilm(sourceFilm, ratedIds);
+      const artwork = catalog ? feedFactArtwork(catalog, fact.insight) : null;
+      if (artwork?.poster) {
+        hydrated.push({ ...fact, ...artwork });
+        changed = true;
+      } else hydrated.push(fact);
+    } catch (_) {
+      hydrated.push(fact);
+    }
+  }
+
+  if (changed) {
+    try { await saveFeedFacts(hydrated); } catch (_) { /* оформление факта необязательно */ }
+  }
+  return hydrated;
 }
 
 function feedCacheFilmId(films) {
@@ -2243,15 +2324,22 @@ function aiFeedCard(fact, index, films) {
   const reason = fact.reason || (fact.sourceTitle
     ? `Этот факт связан с фильмом «${fact.sourceTitle}» из твоего дневника.`
     : "Этот факт связан с фильмом, который ты оценил раньше.");
+  const posterFilm = fact.poster ? {
+    title: fact.posterTitle || fact.sourceTitle,
+    poster: fact.poster,
+    posterPreview: fact.posterPreview,
+  } : (linkedFilm || null);
   const card = feedCard({
     type: "ai-fact",
     label: "А ты знал?",
     title: fact.insight,
     detail: reason,
     film: linkedFilm || null,
+    posterFilm,
     action: linkedFilm ? "film" : "diary",
     actionLabel: linkedFilm ? "Открыть запись" : "Открыть дневник",
   }, index);
+  if (fact.posterTitle) card.dataset.posterTitle = fact.posterTitle;
   card.setAttribute("aria-label", `А ты знал? ${fact.insight} Почему этот факт здесь: ${reason}`);
   return card;
 }
@@ -2267,7 +2355,8 @@ function insertAiFeedCards(list, facts, films, revision) {
 async function maybeRenderAiFeedCard(films, list, revision) {
   if (!films.length) return;
 
-  const facts = await loadFeedFacts();
+  let facts = await loadFeedFacts();
+  facts = await hydrateFeedFactArtwork(facts, films);
   if (revision !== feedRenderRevision) return;
   insertAiFeedCards(list, facts, films, revision);
   if (!shouldGenerateFeedFact(facts, films) || !AI_FEED_ENDPOINT) return;
@@ -2316,6 +2405,7 @@ async function maybeRenderAiFeedCard(films, list, revision) {
       sourceTitle: catalog.source?.title || "",
       sourceDirector: catalog.source?.director || "",
       sourceMovieId: Number(catalog.sourceMovieId) || 0,
+      ...feedFactArtwork(catalog, insight),
       generatedAt: now,
       filmsCount: films.length,
       lastFilmId: feedCacheFilmId(films),
@@ -2441,10 +2531,11 @@ function feedCard(insight, index) {
   copy.append(action);
   card.append(copy);
 
-  if (insight.film?.poster) {
+  const posterFilm = insight.posterFilm || insight.film;
+  if (posterFilm?.poster) {
     card.append(blurPicture(
-      insight.film.posterPreview || microPreview(insight.film.poster, "w92"),
-      insight.film.poster,
+      posterFilm.posterPreview || microPreview(posterFilm.poster, "w92"),
+      posterFilm.poster,
       "feed-poster",
       index < 2 ? "eager" : "lazy",
     ));

@@ -2544,10 +2544,38 @@ body.tab-swipe-settling .app-screen:not(.hidden) {
   body.tab-swipe-settling .app-screen:not(.hidden) { transform: none; }
 }
 
-/* ─── UI 31: лёгкий параллакс постера и более высокий фон оценок ─── */
+/* ─── UI 32: параллакс внутри маски постера и более высокий фон оценок ─── */
 body.hero .hero-media {
-  transform: translate3d(0, var(--hero-parallax-y), 0);
+  transform: none;
+  overflow: hidden;
+  border-radius: inherit;
+  will-change: auto;
+}
+
+body.hero .hero-media::before,
+body.hero .hero-media::after {
+  inset: -64px -1px;
+  transition:
+    opacity 350ms cubic-bezier(.22, 1, .36, 1),
+    filter 350ms cubic-bezier(.22, 1, .36, 1);
   will-change: transform;
+}
+
+body.hero .hero-media::before {
+  transform: translate3d(0, var(--hero-parallax-y), 0) scale(1.06);
+}
+
+body.hero .hero-media::after {
+  transform: translate3d(0, var(--hero-parallax-y), 0) scale(1.015);
+}
+
+body.hero.hero-image-loaded .hero-media::after {
+  transform: translate3d(0, var(--hero-parallax-y), 0) scale(1);
+}
+
+body.hero .hero-wrap.hero-contain .hero-media::before {
+  inset: -64px -28px;
+  transform: translate3d(0, var(--hero-parallax-y), 0) scale(1.08);
 }
 
 #step-1 .rating-film {
@@ -2560,5 +2588,9 @@ body.hero .hero-media {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  body.hero .hero-media { transform: none; will-change: auto; }
+  :root { --hero-parallax-y: 0px !important; }
+  body.hero .hero-media::before { transform: scale(1.06); will-change: auto; }
+  body.hero .hero-media::after,
+  body.hero.hero-image-loaded .hero-media::after { transform: scale(1); will-change: auto; }
+  body.hero .hero-wrap.hero-contain .hero-media::before { transform: scale(1.08); }
 }
