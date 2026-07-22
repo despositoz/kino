@@ -12,12 +12,12 @@ const inTelegram = !!(tg && tg.initData);
 let fullscreenUnavailable = false;
 
 function lockTelegramVerticalSwipes() {
-  if (!tg || typeof tg.disableVerticalSwipes !== "function") return;
+  if (!inTelegram || !tg || typeof tg.disableVerticalSwipes !== "function") return;
   try { tg.disableVerticalSwipes(); } catch (_) { /* старый клиент */ }
 }
 
 function requestAppFullscreen() {
-  if (!tg) return;
+  if (!inTelegram || !tg) return;
 
   // expand работает в старых клиентах, requestFullscreen — в Telegram 8.0+.
   tg.expand();
@@ -33,6 +33,13 @@ function requestAppFullscreen() {
 
 if (tg) {
   tg.ready();
+  if (inTelegram) {
+    try {
+      if (typeof tg.setHeaderColor === "function") tg.setHeaderColor("#09090B");
+      if (typeof tg.setBackgroundColor === "function") tg.setBackgroundColor("#09090B");
+      if (typeof tg.setBottomBarColor === "function") tg.setBottomBarColor("#050506");
+    } catch (_) { /* старый клиент Telegram оставит системные цвета */ }
+  }
   lockTelegramVerticalSwipes();
   requestAppFullscreen();
   lockTelegramVerticalSwipes();
@@ -399,6 +406,7 @@ let selectedOnboardingGenres = new Set();
 let selectedFrequency = "";
 let reviewMode = "self";
 let ratingCriterionIndex = 0;
+let diaryView = "history";
 
 const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
@@ -854,6 +862,7 @@ async function showTab(name) {
   const nextScreen = $("screen-" + name);
   if (name === "rate" && previousTab !== "rate") rateReturnTab = previousTab;
   tab = name;
+  if (name !== "feed") document.body.classList.remove("feed-has-hero");
   if (name !== "rate") closeSearchKeyboard();
   $("screen-rate").classList.toggle("hidden", name !== "rate");
   $("screen-feed").classList.toggle("hidden", name !== "feed");
@@ -2617,6 +2626,62 @@ function startReevaluation(film) {
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
+function feedGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 6) return "Доброй ночи";
+  if (hour < 12) return "Доброе утро";
+  if (hour < 18) return "Добрый день";
+  return "Добрый вечер";
+}
+
+function renderFeedHero(film = null) {
+  const hero = $("feed-hero");
+  hero.innerHTML = "";
+  hero.classList.toggle("hidden", !film);
+  document.body.classList.toggle("feed-has-hero", !!film && tab === "feed");
+  if (!film) return;
+
+  const heroBackdrop = originalBackdrop(film.backdrop, "w1280") || film.poster;
+  const heroPreview = originalBackdrop(film.backdropPreview || film.backdrop, "w300") ||
+    film.posterPreview || microPreview(film.poster, "w92");
+  setBlurBackground(
+    hero,
+    heroPreview,
+    heroBackdrop,
+    "--feed-hero-preview",
+    "--feed-hero-image",
+    "is-image-loaded",
+  );
+
+  const top = el("div", "feed-hero-top");
+  const welcome = el("div", "feed-hero-welcome");
+  welcome.append(el("span", "", feedGreeting()), el("strong", "", profileName()));
+  const avatar = el("div", "feed-hero-avatar");
+  const avatarUrl = profileAvatar();
+  if (avatarUrl) {
+    const image = new Image();
+    image.src = avatarUrl;
+    image.alt = `Фото ${profileName()}`;
+    avatar.append(image);
+  } else {
+    avatar.textContent = profileName().trim().charAt(0).toUpperCase() || "К";
+  }
+  top.append(welcome, avatar);
+
+  const open = el("button", "feed-hero-open");
+  open.type = "button";
+  open.append(
+    el("span", "feed-hero-label", "Последний просмотр"),
+    el("strong", "feed-hero-title", film.title),
+    el("span", "feed-hero-meta", `${starsText(film.quality)}  ${toFive(film.quality).toFixed(1)} из 5 · ${film.genre}`),
+  );
+  open.addEventListener("click", () => {
+    haptic("impact", "rigid");
+    openDiaryFilm(film);
+  });
+  hero.append(top, open);
+}
+
 async function renderFeed() {
   const revision = ++feedRenderRevision;
   aiFeedRequestController?.abort();
@@ -2627,11 +2692,13 @@ async function renderFeed() {
   try {
     films = await store.getAll();
   } catch (e) {
+    renderFeedHero();
     list.append(el("div", "feed-error", "Не удалось собрать ленту. Попробуй открыть её ещё раз."));
     return;
   }
 
   if (!films.length) {
+    renderFeedHero();
     const empty = el("section", "feed-empty");
     empty.append(el("div", "feed-empty-mark", "•••"));
     empty.append(el("h2", "", "Здесь появится твоя лента"));
@@ -2646,6 +2713,8 @@ async function renderFeed() {
     list.append(empty);
     return;
   }
+
+  renderFeedHero(films[0]);
 
   if (films.length <= 2) {
     const starter = el("section", "feed-starter");
@@ -2700,15 +2769,19 @@ async function renderDiary() {
   try {
     films = await store.getAll();
   } catch (e) {
+    $("diary-view-tabs").classList.add("hidden");
     list.append(el("div", "empty", "Не удалось загрузить дневник: " + (e.message || e)));
     return;
   }
   if (!films.length) {
+    $("diary-view-tabs").classList.add("hidden");
     $("stats").classList.add("hidden");
     $("diary-feature").classList.add("hidden");
     list.append(el("div", "empty", "Дневник пока пуст. Оцени первый фильм на вкладке «Оценить»."));
     return;
   }
+  $("diary-view-tabs").classList.remove("hidden");
+  setDiaryView(diaryView, false);
   $("stats").classList.remove("hidden");
   renderDiaryFeature(films[0]);
   renderStats(films);
@@ -2716,6 +2789,18 @@ async function renderDiary() {
   void hydrateDiaryMetadata(films).then((enriched) => {
     if (enriched && tab === "diary") renderStats(enriched);
   });
+}
+
+function setDiaryView(view, buzz = true) {
+  diaryView = view === "stats" ? "stats" : "history";
+  $("screen-diary").dataset.view = diaryView;
+  const history = $("diary-tab-history");
+  const stats = $("diary-tab-stats");
+  history.classList.toggle("on", diaryView === "history");
+  stats.classList.toggle("on", diaryView === "stats");
+  history.setAttribute("aria-selected", String(diaryView === "history"));
+  stats.setAttribute("aria-selected", String(diaryView === "stats"));
+  if (buzz) haptic("selection");
 }
 
 function renderDiaryFeature(film) {
@@ -2928,10 +3013,27 @@ async function renderProfile() {
   profileDraftFavorites = [...(profile.favorites || [])].map(String);
   $("profile-bio-count").textContent = $("profile-bio").value.length;
   syncProfileAvatar();
-  await renderProfileFavorites();
+  const films = await store.getAll();
+  renderProfileStats(films);
+  await renderProfileFavorites(films);
   profileBaseline = profileDraftSnapshot();
   syncProfileDirty();
   window.scrollTo(0, 0);
+}
+
+function renderProfileStats(films) {
+  $("profile-stat-total").textContent = films.length;
+  if (!films.length) {
+    $("profile-stat-avg").textContent = "—";
+    $("profile-stat-genre").textContent = "—";
+    return;
+  }
+  const average = films.reduce((sum, film) => sum + toFive(film.quality), 0) / films.length;
+  $("profile-stat-avg").textContent = average.toFixed(1);
+  const genres = new Map();
+  films.forEach((film) => genres.set(film.genre, (genres.get(film.genre) || 0) + 1));
+  $("profile-stat-genre").textContent = [...genres.entries()]
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
 }
 
 function profileDraftSnapshot() {
@@ -2947,10 +3049,10 @@ function syncProfileDirty() {
   $("btn-profile-save").disabled = !dirty;
 }
 
-async function renderProfileFavorites() {
+async function renderProfileFavorites(filmsInput = null) {
   const grid = $("profile-favorites");
   grid.innerHTML = "";
-  const films = await store.getAll();
+  const films = filmsInput || await store.getAll();
   const selected = new Set(profileDraftFavorites);
   const favoriteFilms = films.filter((film) => selected.has(String(film.entryId || film.id))).slice(0, 4);
   favoriteFilms.forEach((film) => {
@@ -3421,6 +3523,8 @@ $("tab-profile").addEventListener("click", () => {
   if (tab !== "profile") haptic("selection");
   showTab("profile");
 });
+$("diary-tab-history").addEventListener("click", () => setDiaryView("history"));
+$("diary-tab-stats").addEventListener("click", () => setDiaryView("stats"));
 $("f-genre").addEventListener("change", () => syncGenreAccent($("f-genre").value));
 
 ["f-liked", "f-disliked", "f-moment"].forEach((id) => {

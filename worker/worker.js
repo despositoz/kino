@@ -2,6 +2,7 @@ const ALLOWED_ORIGINS = new Set([
   "https://despositoz.github.io",
   "http://127.0.0.1:8765",
   "http://localhost:8765",
+  "null", // Локальный предпросмотр index.html через file://.
 ]);
 
 const MODEL = "gemini-3.1-flash-lite";
