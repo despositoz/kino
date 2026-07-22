@@ -10,7 +10,7 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=ui29">
+<link rel="stylesheet" href="style.css?v=ui30">
 </head>
 <body>
 
@@ -139,20 +139,17 @@
       <div id="stars-2-tag" class="stars-tag"></div>
       <p id="tmdb-comparison" class="tmdb-comparison hidden"></p>
     </div>
-    <p id="notes-guide" class="notes-guide">
-      Пиши как другу после просмотра. Достаточно одной конкретной мысли; остальные поля можно пропустить.
-    </p>
     <div class="note-block feeling-card liked-card">
       <div class="feeling-head"><span>♥</span><div class="sec-label">Что зацепило?</div></div>
-      <textarea id="f-liked" aria-label="Что зацепило в фильме" aria-describedby="notes-guide" placeholder="Герой, идея, визуал или музыка: что именно понравилось?" rows="2"></textarea>
+      <textarea id="f-liked" aria-label="Что зацепило в фильме" placeholder="Герой, идея, визуал или музыка: что именно понравилось?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card disliked-card">
       <div class="feeling-head"><span>☹</span><div class="sec-label">Что подвело?</div></div>
-      <textarea id="f-disliked" aria-label="Что подвело в фильме" aria-describedby="notes-guide" placeholder="Где стало скучно, неправдоподобно или затянуто?" rows="2"></textarea>
+      <textarea id="f-disliked" aria-label="Что подвело в фильме" placeholder="Где стало скучно, неправдоподобно или затянуто?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card scene-card">
       <div class="feeling-head"><span>▶</span><div class="sec-label">Какая сцена засела в голове?</div></div>
-      <textarea id="f-moment" aria-label="Какая сцена запомнилась" aria-describedby="notes-guide" placeholder="Что происходило и почему этот момент запомнился?" rows="2"></textarea>
+      <textarea id="f-moment" aria-label="Какая сцена запомнилась" placeholder="Что происходило и почему этот момент запомнился?" rows="2"></textarea>
     </div>
 
     <div class="review-choice">
@@ -341,6 +338,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui29"></script>
+<script src="app.js?v=ui30"></script>
 </body>
 </html>

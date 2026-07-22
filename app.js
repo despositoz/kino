@@ -228,19 +228,48 @@ async function saveProfileData(value) {
   else localStorage.setItem(PROFILE_KEY, raw);
 }
 
-async function loadFeedInsightCache() {
+function normalizeStoredFeedFact(value) {
+  if (!value || typeof value !== "object") return null;
+  const insight = typeof value.insight === "string" ? value.insight.trim() : "";
+  if (!insight || insight.length > 600) return null;
+  return {
+    id: Number(value.id || value.generatedAt) || Date.now(),
+    insight,
+    reason: typeof value.reason === "string" ? value.reason.trim().slice(0, 260) : "",
+    sourceTitle: typeof value.sourceTitle === "string" ? value.sourceTitle.trim().slice(0, 140) : "",
+    sourceDirector: typeof value.sourceDirector === "string" ? value.sourceDirector.trim().slice(0, 100) : "",
+    sourceMovieId: Number(value.sourceMovieId) || 0,
+    generatedAt: Number(value.generatedAt) || Date.now(),
+    filmsCount: Number(value.filmsCount) || 0,
+    lastFilmId: String(value.lastFilmId || ""),
+  };
+}
+
+async function loadFeedFacts() {
   let raw = "";
   try {
     if (useCloud) raw = (await cloud.getItems([AI_FEED_KEY]))[AI_FEED_KEY] || "";
     else raw = localStorage.getItem(AI_FEED_KEY) || "";
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return [];
+    const saved = JSON.parse(raw);
+    const values = Array.isArray(saved?.facts) ? saved.facts : saved?.insight ? [saved] : [];
+    return values.map(normalizeStoredFeedFact).filter(Boolean)
+      .sort((a, b) => b.generatedAt - a.generatedAt)
+      .slice(0, MAX_FEED_FACTS);
   } catch (_) {
-    return null;
+    return [];
   }
 }
 
-async function saveFeedInsightCache(value) {
-  const raw = JSON.stringify(value);
+async function saveFeedFacts(values) {
+  const facts = values.map(normalizeStoredFeedFact).filter(Boolean)
+    .sort((a, b) => b.generatedAt - a.generatedAt)
+    .slice(0, MAX_FEED_FACTS);
+  let raw = JSON.stringify({ facts });
+  while (raw.length > FEED_FACTS_STORAGE_LIMIT && facts.length > 1) {
+    facts.pop();
+    raw = JSON.stringify({ facts });
+  }
   if (useCloud) await cloud.set(AI_FEED_KEY, raw);
   else localStorage.setItem(AI_FEED_KEY, raw);
 }
@@ -251,6 +280,7 @@ async function applyResetRequest() {
 
   try {
     const removed = await store.clearAll();
+    await saveFeedFacts([]);
     const savedProfile = await loadProfile();
     await saveProfileData({ ...savedProfile, favorites: [] });
     url.searchParams.delete("reset");
@@ -337,6 +367,8 @@ const DIRECTOR_MOVIES_CACHE = new Map();
 const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
 const REVIEW_DRAFT_KEY = "kino_review_draft_v1";
 const AI_FEED_KEY = "kino_ai_feed_v2";
+const MAX_FEED_FACTS = 6;
+const FEED_FACTS_STORAGE_LIMIT = 3900;
 const AI_MIN_DRAFT_CHARS = 20;
 const AI_REVIEW_ENDPOINT = String(
   document.querySelector('meta[name="kino-ai-endpoint"]')?.content || ""
@@ -2131,14 +2163,19 @@ function otherDirectorFilms(credits, sourceId, ratedIds) {
     .map((movie) => ({ title: movie.title, year: Number(yearOf(movie)) }));
 }
 
-async function buildFeedCatalog(films) {
+async function buildFeedCatalog(films, facts = []) {
   const seeds = films.filter((film) => Number(film.movieId || film.tmdbId)).slice(0, 6);
   if (!seeds.length) return null;
   const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
-  const start = Math.floor(Date.now() / DAY_MS) % seeds.length;
+  const usedSourceIds = new Set(facts.map((fact) => Number(fact.sourceMovieId)).filter(Boolean));
+  const unseenSeeds = seeds.filter(
+    (film) => !usedSourceIds.has(Number(film.movieId || film.tmdbId))
+  );
+  const candidates = unseenSeeds.length ? unseenSeeds : seeds;
+  const start = Math.floor(Date.now() / DAY_MS) % candidates.length;
 
-  for (let offset = 0; offset < seeds.length; offset++) {
-    const film = seeds[(start + offset) % seeds.length];
+  for (let offset = 0; offset < candidates.length; offset++) {
+    const film = candidates[(start + offset) % candidates.length];
     const movieId = Number(film.movieId || film.tmdbId);
     try {
       const details = await loadMovieDetails(movieId);
@@ -2151,6 +2188,7 @@ async function buildFeedCatalog(films) {
       }
       return {
         source: catalogSource(details, film, director),
+        sourceMovieId: movieId,
         otherFilmsByDirector: related,
       };
     } catch (_) {
@@ -2164,48 +2202,60 @@ function feedCacheFilmId(films) {
   return String(films[0]?.entryId || films[0]?.id || "");
 }
 
-function isFeedInsightCacheFresh(cache, films) {
-  if (!cache || typeof cache.insight !== "string") return false;
-  const insight = cache.insight.trim();
-  const age = Date.now() - Number(cache.generatedAt || 0);
-  return insight.length > 0 && insight.length <= 600 &&
-    Number(cache.filmsCount) === films.length &&
-    String(cache.lastFilmId || "") === feedCacheFilmId(films) &&
-    age >= 0 && age < DAY_MS;
+function shouldGenerateFeedFact(facts, films) {
+  const latest = facts[0];
+  if (!latest) return true;
+  const age = Date.now() - Number(latest.generatedAt || 0);
+  const diaryChanged = Number(latest.filmsCount) !== films.length ||
+    String(latest.lastFilmId || "") !== feedCacheFilmId(films);
+  return diaryChanged || age < 0 || age >= DAY_MS;
 }
 
-function aiFeedCard(insight) {
-  const text = insight.trim();
+function feedFactReason(catalog) {
+  const title = catalog.source?.title || "этот фильм";
+  const director = catalog.source?.director || "";
+  return director
+    ? `${director} снял «${title}» — фильм, который ты оценил раньше.`
+    : `«${title}» есть в твоём дневнике — поэтому этот факт появился в ленте.`;
+}
+
+function aiFeedCard(fact, index, films) {
+  const linkedFilm = films.find(
+    (film) => Number(film.movieId || film.tmdbId) === Number(fact.sourceMovieId)
+  );
+  const reason = fact.reason || (fact.sourceTitle
+    ? `Этот факт связан с фильмом «${fact.sourceTitle}» из твоего дневника.`
+    : "Этот факт связан с фильмом, который ты оценил раньше.");
   const card = feedCard({
     type: "ai-fact",
     label: "А ты знал?",
-    title: text,
-    detail: "",
-    action: "diary",
-    actionLabel: "Открыть дневник",
-  }, 0);
-  card.setAttribute("aria-label", `А ты знал? ${text} Открыть дневник`);
+    title: fact.insight,
+    detail: reason,
+    film: linkedFilm || null,
+    action: linkedFilm ? "film" : "diary",
+    actionLabel: linkedFilm ? "Открыть запись" : "Открыть дневник",
+  }, index);
+  card.setAttribute("aria-label", `А ты знал? ${fact.insight} Почему этот факт здесь: ${reason}`);
   return card;
 }
 
-function insertAiFeedCard(list, insight, revision) {
+function insertAiFeedCards(list, facts, films, revision) {
   if (revision !== feedRenderRevision || list !== $("feed-list") || !list.isConnected) return;
-  list.querySelector(".feed-card--ai-fact")?.remove();
-  list.prepend(aiFeedCard(insight));
+  list.querySelectorAll(".feed-card--ai-fact").forEach((card) => card.remove());
+  list.prepend(...facts.slice(0, MAX_FEED_FACTS).map(
+    (fact, index) => aiFeedCard(fact, index, films)
+  ));
 }
 
 async function maybeRenderAiFeedCard(films, list, revision) {
   if (!films.length) return;
 
-  const cache = await loadFeedInsightCache();
+  const facts = await loadFeedFacts();
   if (revision !== feedRenderRevision) return;
-  if (isFeedInsightCacheFresh(cache, films)) {
-    insertAiFeedCard(list, cache.insight, revision);
-    return;
-  }
-  if (!AI_FEED_ENDPOINT) return;
+  insertAiFeedCards(list, facts, films, revision);
+  if (!shouldGenerateFeedFact(facts, films) || !AI_FEED_ENDPOINT) return;
 
-  const catalog = await buildFeedCatalog(films);
+  const catalog = await buildFeedCatalog(films, facts);
   if (revision !== feedRenderRevision || !catalog) return;
 
   const controller = new AbortController();
@@ -2218,7 +2268,7 @@ async function maybeRenderAiFeedCard(films, list, revision) {
       body: JSON.stringify({
         stats: buildFeedStats(films),
         catalog,
-        previousInsight: cache?.insight || "",
+        previousInsights: facts.slice(0, MAX_FEED_FACTS).map((fact) => fact.insight),
       }),
       signal: controller.signal,
     });
@@ -2226,16 +2276,38 @@ async function maybeRenderAiFeedCard(films, list, revision) {
     const insight = typeof data.insight === "string" ? data.insight.trim() : "";
     if (!response.ok || !insight || insight.length > 600) return;
 
-    const nextCache = {
+    const now = Date.now();
+    const repeatedIndex = facts.findIndex(
+      (fact) => fact.insight.toLocaleLowerCase("ru") === insight.toLocaleLowerCase("ru")
+    );
+    if (repeatedIndex >= 0) {
+      const updatedFacts = facts.map((fact, index) => index === repeatedIndex ? {
+        ...fact,
+        generatedAt: now,
+        filmsCount: films.length,
+        lastFilmId: feedCacheFilmId(films),
+      } : fact);
+      try { await saveFeedFacts(updatedFacts); } catch (_) { /* история необязательна */ }
+      insertAiFeedCards(list, updatedFacts, films, revision);
+      return;
+    }
+
+    const nextFact = {
+      id: now,
       insight,
-      generatedAt: Date.now(),
+      reason: feedFactReason(catalog),
+      sourceTitle: catalog.source?.title || "",
+      sourceDirector: catalog.source?.director || "",
+      sourceMovieId: Number(catalog.sourceMovieId) || 0,
+      generatedAt: now,
       filmsCount: films.length,
       lastFilmId: feedCacheFilmId(films),
     };
-    try { await saveFeedInsightCache(nextCache); } catch (_) { /* кеш не блокирует ленту */ }
-    insertAiFeedCard(list, insight, revision);
+    const nextFacts = [nextFact, ...facts].slice(0, MAX_FEED_FACTS);
+    try { await saveFeedFacts(nextFacts); } catch (_) { /* история не блокирует ленту */ }
+    insertAiFeedCards(list, nextFacts, films, revision);
   } catch (_) {
-    // AI-инсайт необязательный: при сети, лимите или таймауте обычная лента остаётся как есть.
+    // AI-факты необязательны: при сети, лимите или таймауте сохранённая лента остаётся как есть.
   } finally {
     clearTimeout(timeout);
     if (aiFeedRequestController === controller) aiFeedRequestController = null;
@@ -2428,7 +2500,7 @@ async function renderFeed() {
     const starter = el("section", "feed-starter");
     starter.append(el("span", "feed-starter-mark", "Лента собирается"));
     starter.append(el("h2", "", "Уже есть что рассказать"));
-    starter.append(el("p", "", `Gemini подготовит факт о твоём кино. Ещё ${3 - films.length} ${films.length === 1 ? "оценки" : "оценка"} — и здесь появятся закономерности твоего вкуса.`));
+    starter.append(el("p", "", `Gemini постепенно добавляет факты о твоём кино. Ещё ${3 - films.length} ${films.length === 1 ? "оценки" : "оценка"} — и здесь появятся закономерности твоего вкуса.`));
     const cta = el("button", "feed-starter-action", "Оценить ещё фильм");
     cta.type = "button";
     cta.addEventListener("click", () => showTab("rate"));
