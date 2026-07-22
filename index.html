@@ -10,13 +10,13 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=ui19">
+<link rel="stylesheet" href="style.css?v=ui28">
 </head>
 <body>
 
 <a class="skip-link" href="#screen-feed">К основному содержимому</a>
 
-<!-- Название приложения в зоне нативных кнопок Telegram (Закрыть / ⋯) —
+<!-- Название приложения в зоне нативных кнопок Telegram (Закрыть / ⋯):
      видно на всех вкладках, не перекрывает их: сидит между кнопками. -->
 <div id="brand-mark" aria-hidden="true">SYO</div>
 <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
@@ -56,8 +56,6 @@
   <section id="step-0">
     <button id="search-scrim" class="search-scrim" type="button" aria-label="Закрыть поиск"></button>
     <div id="film-search">
-      <h2 class="ask">Выбери фильм</h2>
-      <p class="ask-sub">Популярное сегодня или поиск по каталогу</p>
       <div id="search-shell" class="search-shell">
         <div class="search-row">
           <div class="search-control">
@@ -77,14 +75,13 @@
       </div>
       <div id="recommended" class="hidden">
         <div class="sec-label pop-label">Возможно, ты смотрел</div>
-        <div id="recommended-list"></div>
+        <div id="recommended-list" aria-live="polite" aria-busy="false"></div>
       </div>
     </div>
 
     <!-- герой-экран выбранного фильма (тёмный фон включается классом body.hero) -->
     <div id="film-hero" class="hero-wrap hidden">
       <div class="hero-media" aria-hidden="true"></div>
-      <button id="btn-clear" class="clear-btn" aria-label="Сбросить фильм">×</button>
       <div class="hero-bottom">
         <div class="hero-label">Ты оцениваешь</div>
         <div id="hero-title" class="hero-title"></div>
@@ -92,7 +89,10 @@
         <div id="hero-chips" class="hero-chips hidden">
           <span id="chip-year" class="chip"></span>
           <span id="chip-genre" class="chip"></span>
+          <span id="chip-runtime" class="chip hidden"></span>
         </div>
+        <p id="hero-director" class="hero-director hidden">Режиссёр · <strong id="hero-director-name"></strong></p>
+        <p id="hero-overview" class="hero-overview hidden"></p>
         <!-- фильм, добавленный вручную: год и жанр вводятся -->
         <div class="hero-fields">
           <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
@@ -107,8 +107,8 @@
   <section id="step-1" class="hidden">
     <div id="rating-film" class="rating-film">
       <span id="rating-poster-wrap" class="rating-poster-media blur-up-media hidden">
-        <img id="rating-poster-preview" class="blur-up-preview" alt="" aria-hidden="true">
-        <img id="rating-poster" class="blur-up-full" alt="" aria-hidden="true">
+        <img id="rating-poster-preview" class="blur-up-preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="" aria-hidden="true">
+        <img id="rating-poster" class="blur-up-full" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="" aria-hidden="true">
       </span>
       <div>
         <span id="rating-mode-label">Оцениваешь</span>
@@ -119,7 +119,7 @@
     <div class="stars-sticky">
       <div class="stars-card">
         <div id="stars-slot-rating" class="stars-slot">
-          <div id="stars-shared" class="stars-row dynamic"></div>
+          <div id="stars-shared" class="stars-row dynamic" aria-hidden="true"></div>
         </div>
         <div id="stars-1-num" class="stars-num">3.5 из 5</div>
         <div id="stars-1-tag" class="stars-tag">Хорошо</div>
@@ -130,22 +130,26 @@
 
   <!-- Шаг 3: итог и заметки -->
   <section id="step-2" class="hidden">
-    <div class="stars-final">
+    <div class="stars-final" aria-live="polite" aria-atomic="true">
       <div id="stars-slot-final" class="stars-slot"></div>
-      <div id="stars-2-num" class="stars-num hidden"></div>
-      <div id="stars-2-tag" class="stars-tag hidden"></div>
+      <div id="stars-2-num" class="stars-num"></div>
+      <div id="stars-2-tag" class="stars-tag"></div>
+      <p id="tmdb-comparison" class="tmdb-comparison hidden"></p>
     </div>
+    <p id="notes-guide" class="notes-guide">
+      Пиши как другу после просмотра. Достаточно одной конкретной мысли; остальные поля можно пропустить.
+    </p>
     <div class="note-block feeling-card liked-card">
       <div class="feeling-head"><span>♥</span><div class="sec-label">Что зацепило?</div></div>
-      <textarea id="f-liked" placeholder="Что зацепило в фильме?" rows="2"></textarea>
+      <textarea id="f-liked" aria-label="Что зацепило в фильме" aria-describedby="notes-guide" placeholder="Герой, идея, визуал или музыка: что именно понравилось?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card disliked-card">
       <div class="feeling-head"><span>☹</span><div class="sec-label">Что подвело?</div></div>
-      <textarea id="f-disliked" placeholder="Что не сработало?" rows="2"></textarea>
+      <textarea id="f-disliked" aria-label="Что подвело в фильме" aria-describedby="notes-guide" placeholder="Где стало скучно, неправдоподобно или затянуто?" rows="2"></textarea>
     </div>
     <div class="note-block feeling-card scene-card">
       <div class="feeling-head"><span>▶</span><div class="sec-label">Какая сцена засела в голове?</div></div>
-      <textarea id="f-moment" placeholder="Опиши момент, который запомнился" rows="2"></textarea>
+      <textarea id="f-moment" aria-label="Какая сцена запомнилась" aria-describedby="notes-guide" placeholder="Что происходило и почему этот момент запомнился?" rows="2"></textarea>
     </div>
 
     <div class="review-choice">
@@ -169,7 +173,7 @@
     <div class="review-intro">
       <span id="review-editor-source" class="review-editor-source">Твой текст</span>
       <h2 id="review-editor-title">Отредактируй запись</h2>
-      <p>Проверь формулировки — запись сохранится только после твоего подтверждения.</p>
+      <p>Проверь формулировки: запись сохранится только после твоего подтверждения.</p>
     </div>
 
     <div class="review-panel">
@@ -194,7 +198,7 @@
 <!-- ─── Вкладка «Дневник»: статистика + записи ─── -->
 <main id="screen-diary" class="app-screen hidden">
   <p id="storage-note" class="ask-sub center hidden">
-    Открыто вне Telegram — записи сохраняются только в этом браузере.
+    Открыто вне Telegram. Записи сохраняются только в этом браузере.
   </p>
 
   <div id="diary-feature" class="diary-feature hidden"></div>
@@ -203,8 +207,9 @@
     <div class="diary-heading"><span>Твоя история</span><h2 id="diary-praise">Кино в цифрах</h2></div>
     <div class="tiles">
       <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM4 8l3-4h4L8 8m3 0 3-4h4l-3 4"/></svg><div id="st-total" class="tile-num">0</div><div class="tile-sub">фильмов</div></div>
-      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg><div id="st-avg" class="tile-num gold">—</div><div class="tile-sub">средняя оценка</div></div>
-      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h9l7 7-8 8-8-8zm5 4h.01"/></svg><div id="st-genre" class="tile-num teal small">—</div><div class="tile-sub">любимый жанр</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg><div id="st-avg" class="tile-num gold">…</div><div class="tile-sub">средняя оценка</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h9l7 7-8 8-8-8zm5 4h.01"/></svg><div id="st-genre" class="tile-num teal small">…</div><div class="tile-sub">любимый жанр</div></div>
+      <div class="tile"><svg class="tile-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><div id="st-runtime" class="tile-num small">—</div><div class="tile-sub">время просмотра</div></div>
     </div>
 
     <div class="diary-card">
@@ -215,6 +220,11 @@
     <div class="diary-card">
       <div class="sec-label">Любимые жанры</div>
       <div id="genre-bars" class="genre-bars"></div>
+    </div>
+
+    <div id="director-card" class="diary-card hidden">
+      <div class="sec-label">Любимые режиссёры</div>
+      <div id="director-bars" class="director-bars"></div>
     </div>
 
     <div class="diary-heading history-heading"><span>По порядку</span><h2>История просмотров</h2></div>
@@ -235,7 +245,7 @@
 <main id="screen-profile" class="app-screen hidden">
   <section class="profile-card">
     <div class="profile-avatar-button" aria-label="Фото профиля Telegram">
-      <img id="profile-avatar-image" class="hidden" alt="Фото профиля">
+        <img id="profile-avatar-image" class="hidden" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="Фото профиля">
       <span id="profile-avatar-fallback">К</span>
     </div>
     <label class="profile-field">Имя<input id="profile-name" readonly aria-readonly="true" tabindex="-1"></label>
@@ -257,7 +267,7 @@
       <div id="onboarding-step-1">
         <span class="eyebrow">Твой кинодневник</span>
         <h2 id="onboarding-title" tabindex="-1">Что тебе нравится смотреть?</h2>
-        <p>Выбери несколько жанров — так первые рекомендации будут точнее.</p>
+        <p>Выбери несколько жанров. Так первые рекомендации будут точнее.</p>
         <div id="onboarding-genres" class="genre-chips"></div>
         <button id="btn-onboarding-next" class="primary" type="button">Продолжить</button>
       </div>
@@ -328,6 +338,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui19"></script>
+<script src="app.js?v=ui28"></script>
 </body>
 </html>

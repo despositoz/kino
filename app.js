@@ -280,7 +280,8 @@ function showResetNotice(result) {
 
 const emptyForm = () => ({
   title: "", year: "", genre: GENRES[0],
-  tmdbId: null, poster: "", posterPreview: "", backdrop: "", backdropPreview: "",
+  tmdbId: null, poster: "", posterPreview: "", backdrop: "", backdropPreview: "", overview: "",
+  runtime: 0, director: "", tmdbRating: 0, tmdbVoteCount: 0,
   scores: { plot: 5, chars: 5, visual: 5, sound: 5, emotion: 5 },
   personal: 5,
   liked: "", disliked: "", moment: "",
@@ -299,12 +300,17 @@ let renderedSearchMovies = [];
 let selectingMovie = false;
 let rateReturnTab = "feed";
 let profileBaseline = "";
-let searchLayoutBottom = window.visualViewport
-  ? window.visualViewport.offsetTop + window.visualViewport.height
-  : window.innerHeight;
-let layoutViewportHeight = Math.max(window.innerHeight, window.visualViewport?.height || 0);
+let layoutViewportHeight = Math.max(
+  window.innerHeight,
+  window.visualViewport?.height || 0,
+  Number(tg?.viewportStableHeight || 0),
+);
+let viewportSyncFrame = 0;
+let rateScrollResetFrame = 0;
+let rateScrollResetTimer = 0;
 let popularLoaded = false;
 let recommendationsLoaded = false;
+let recommendationPage = 1;
 let popularMovies = [];
 let popularAnimationFrame = 0;
 let popularPauseUntil = 0;
@@ -326,6 +332,7 @@ let ratingCriterionIndex = 0;
 const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", "Запись"];
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 const SEARCH_CACHE = new Map();
+const MOVIE_DETAILS_CACHE = new Map();
 const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
 const REVIEW_DRAFT_KEY = "kino_review_draft_v1";
 const AI_FEED_KEY = "kino_ai_feed_v1";
@@ -838,35 +845,59 @@ function starsVisualRect(container) {
 function moveSharedStars(targetSlot, previousRect = null) {
   const stars = $("stars-shared");
   activeStarsMorph?.cancel();
+  stars.classList.remove("is-relocating");
   activeStarsMorph = null;
   targetSlot.append(stars);
   if (!previousRect || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  stars.classList.add("is-relocating");
   const destination = starsVisualRect(stars);
-  const dx = previousRect.left - destination.left;
-  const dy = previousRect.top - destination.top;
+  const previousCenterX = previousRect.left + previousRect.width / 2;
+  const previousCenterY = previousRect.top + previousRect.height / 2;
+  const destinationCenterX = destination.left + destination.width / 2;
+  const destinationCenterY = destination.top + destination.height / 2;
+  const dx = previousCenterX - destinationCenterX;
+  const dy = previousCenterY - destinationCenterY;
+  const scale = destination.width > 0 ? previousRect.width / destination.width : 1;
   const animation = stars.animate([
-    { transform: `translate3d(${dx}px, ${dy}px, 0)`, opacity: 1 },
+    { transform: `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`, opacity: 1 },
     { transform: "translate3d(0, 0, 0)", opacity: 1 },
   ], {
     duration: 360,
     easing: "cubic-bezier(.22, 1, .36, 1)",
   });
   activeStarsMorph = animation;
-  animation.finished.then(() => {
+  const finish = () => {
+    stars.classList.remove("is-relocating");
     if (activeStarsMorph === animation) activeStarsMorph = null;
-  }, () => {});
+  };
+  animation.finished.then(finish, finish);
 }
 
 function syncRateHeader() {
-  const searching = document.body.classList.contains("search-active");
-  const isEntry = step === 0 && !form.title && !searching;
-  $("head-title").textContent = isEntry
-    ? "Оценить"
-    : editingEntryId && step === 2 ? "Что изменилось?" : STEP_TITLES[step];
+  $("head-title").textContent = editingEntryId && step === 2
+    ? "Что изменилось?"
+    : STEP_TITLES[step];
   $("head-sub").textContent = `Шаг ${step + 1} из 4`;
-  $("head-sub").classList.toggle("hidden", isEntry);
-  $("progress").classList.toggle("hidden", isEntry);
-  $("btn-back").setAttribute("aria-label", step === 0 ? "Выйти из оценки" : "Назад");
+  $("head-sub").classList.remove("hidden");
+  $("progress").classList.remove("hidden");
+  $("btn-back").setAttribute(
+    "aria-label",
+    step === 0 ? (form.title ? "Назад к выбору фильма" : "Выйти из оценки") : "Назад",
+  );
+}
+
+function resetRateScrollPosition(afterKeyboard = false) {
+  const reset = () => {
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  };
+
+  cancelAnimationFrame(rateScrollResetFrame);
+  clearTimeout(rateScrollResetTimer);
+  reset();
+  rateScrollResetFrame = requestAnimationFrame(reset);
+  if (afterKeyboard) rateScrollResetTimer = setTimeout(reset, 320);
 }
 
 
@@ -917,12 +948,13 @@ function showStep(n) {
   if (n === 2) {
     moveSharedStars($("stars-slot-final"), previousStarsRect);
     updateStars("2");
+    syncTmdbComparison();
     prepareNotesWorkspace();
   }
   if (n === 3) {
     syncReviewEditor();
   }
-  window.scrollTo(0, 0);
+  resetRateScrollPosition();
 }
 
 // ─── Шаг 1: выбор фильма ─────────────────────────────────────────
@@ -1054,18 +1086,42 @@ function syncKeyboardViewport() {
   const active = document.activeElement;
   const editingText = active instanceof HTMLInputElement ||
     active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement;
-  if (!editingText) layoutViewportHeight = Math.max(window.innerHeight, viewportHeight);
-  const keyboardOpen = editingText && layoutViewportHeight - viewportHeight > 90;
+  if (!editingText) {
+    layoutViewportHeight = Math.max(
+      window.innerHeight,
+      viewportHeight,
+      Number(tg?.viewportStableHeight || 0),
+    );
+  }
+  const keyboardOpen = editingText && layoutViewportHeight - viewportHeight > 120;
   document.body.classList.toggle("keyboard-open", keyboardOpen);
+  document.documentElement.classList.toggle("keyboard-open", keyboardOpen);
+  return keyboardOpen;
+}
+
+function scheduleViewportSync() {
+  if (viewportSyncFrame) return;
+  viewportSyncFrame = requestAnimationFrame(() => {
+    viewportSyncFrame = 0;
+    syncKeyboardViewport();
+    syncSearchViewport();
+  });
+}
+
+function keepFocusedControlVisible(control) {
+  if (control === $("f-query") || document.activeElement !== control) return;
+  const viewport = window.visualViewport;
+  const viewportTop = (viewport?.offsetTop || 0) + 12;
+  const viewportBottom = viewportTop + (viewport?.height || window.innerHeight) - 24;
+  const rect = control.getBoundingClientRect();
+  let delta = 0;
+  if (rect.bottom > viewportBottom) delta = rect.bottom - viewportBottom;
+  else if (rect.top < viewportTop) delta = rect.top - viewportTop;
+  if (Math.abs(delta) > 1) window.scrollBy({ top: delta, left: 0, behavior: "auto" });
 }
 
 function setSearchMode(active) {
   clearTimeout(searchBlurTimer);
-  const wasActive = document.body.classList.contains("search-active");
-  if (active && !wasActive) {
-    const viewport = window.visualViewport;
-    searchLayoutBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
-  }
   document.body.classList.toggle("search-active", active);
   $("film-search").classList.toggle("search-focused", active);
   syncRateHeader();
@@ -1100,8 +1156,40 @@ function yearOf(movie) {
 }
 
 function genreOf(movie) {
-  const id = (movie.genre_ids || []).find((genreId) => TMDB_GENRES[genreId]);
+  const ids = movie.genre_ids || (movie.genres || []).map((genre) => genre.id);
+  const id = ids.find((genreId) => TMDB_GENRES[genreId]);
   return TMDB_GENRES[id] || "Другое";
+}
+
+function directorsOf(movie) {
+  return [...new Set((movie.credits?.crew || [])
+    .filter((person) => person.job === "Director" && person.name)
+    .map((person) => person.name.trim()))]
+    .slice(0, 2)
+    .join(", ");
+}
+
+function formatRuntime(minutes) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  if (!total) return "—";
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (!hours) return `${rest} мин`;
+  return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+}
+
+async function loadMovieDetails(movieId) {
+  const id = Number(movieId);
+  if (!id) return null;
+  if (!MOVIE_DETAILS_CACHE.has(id)) {
+    const request = tmdb(`/movie/${id}?append_to_response=credits`)
+      .catch((error) => {
+        MOVIE_DETAILS_CACHE.delete(id);
+        throw error;
+      });
+    MOVIE_DETAILS_CACHE.set(id, request);
+  }
+  return MOVIE_DETAILS_CACHE.get(id);
 }
 
 function movieCard(movie, compact = false) {
@@ -1285,13 +1373,15 @@ function addMovieManually(title) {
   haptic("impact", "soft");
 }
 
-async function loadPopular() {
+async function loadPopular(forceRefresh = false) {
   try {
     let data = null;
-    try {
-      const cached = JSON.parse(localStorage.getItem(TRENDING_CACHE_KEY) || "null");
-      if (cached && Date.now() - cached.savedAt < DAY_MS) data = cached.data;
-    } catch (_) { /* cache miss */ }
+    if (!forceRefresh) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(TRENDING_CACHE_KEY) || "null");
+        if (cached && Date.now() - cached.savedAt < DAY_MS) data = cached.data;
+      } catch (_) { /* cache miss */ }
+    }
     if (!data) {
       data = await tmdb("/trending/movie/day?page=1");
       localStorage.setItem(TRENDING_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
@@ -1307,32 +1397,67 @@ async function loadPopular() {
   }
 }
 
-async function loadRecommendations() {
+async function loadRecommendations(refresh = false) {
+  const list = $("recommended-list");
+  const hadRecommendations = recommendationsLoaded && list.childElementCount > 0;
+  if (refresh) recommendationPage = recommendationPage % 12 + 1;
+  list.classList.toggle("is-refreshing", refresh);
+  list.setAttribute("aria-busy", "true");
   try {
     const films = await store.getAll();
-    const genreScores = new Map();
-    films.forEach((film) => {
-      const weight = Math.max(1, Number(film.quality || 5));
-      genreScores.set(film.genre, (genreScores.get(film.genre) || 0) + weight);
-    });
-    (profile.genres || []).forEach((genre) => genreScores.set(genre, (genreScores.get(genre) || 0) + 6));
-    const genres = [...genreScores.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([genre]) => TMDB_GENRE_IDS[genre])
-      .filter(Boolean)
-      .slice(0, 3);
-    if (!genres.length) {
-      $("recommended").classList.add("hidden");
-      return;
-    }
-    const data = await tmdb(`/discover/movie?sort_by=popularity.desc&vote_count.gte=150&with_genres=${genres.join("|")}`);
     const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
-    const choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
+    const ratedSeeds = films
+      .filter((film) => Number(film.movieId || film.tmdbId))
+      .sort((a, b) => {
+        const scoreA = Number(a.quality || 0) + Number(a.personal || 0);
+        const scoreB = Number(b.quality || 0) + Number(b.personal || 0);
+        return scoreB - scoreA;
+      });
+    const favoriteSeeds = ratedSeeds.filter(
+      (film) => Number(film.quality || 0) >= 7 || Number(film.personal || 0) >= 7
+    );
+    const seeds = (favoriteSeeds.length ? favoriteSeeds : ratedSeeds).slice(0, 4);
+    let choices = [];
+
+    if (seeds.length) {
+      const seed = seeds[(recommendationPage - 1) % seeds.length];
+      const apiPage = Math.floor((recommendationPage - 1) / seeds.length) % 3 + 1;
+      const seedId = Number(seed.movieId || seed.tmdbId);
+      const data = await tmdb(`/movie/${seedId}/recommendations?page=${apiPage}`);
+      choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
+    }
+
+    // Для нового дневника или пустой выдачи оставляем жанровый запасной вариант.
+    if (!choices.length) {
+      const genreScores = new Map();
+      films.forEach((film) => {
+        const weight = Math.max(1, Number(film.quality || 5));
+        genreScores.set(film.genre, (genreScores.get(film.genre) || 0) + weight);
+      });
+      (profile.genres || []).forEach(
+        (genre) => genreScores.set(genre, (genreScores.get(genre) || 0) + 6)
+      );
+      const genres = [...genreScores.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([genre]) => TMDB_GENRE_IDS[genre])
+        .filter(Boolean)
+        .slice(0, 3);
+      if (!genres.length) {
+        recommendationsLoaded = false;
+        $("recommended").classList.add("hidden");
+        return;
+      }
+      const data = await tmdb(`/discover/movie?sort_by=popularity.desc&vote_count.gte=150&with_genres=${genres.join("|")}&page=${recommendationPage}`);
+      choices = (data.results || []).filter((movie) => !ratedIds.has(movie.id));
+    }
     renderRecommendations($("recommended-list"), choices);
     recommendationsLoaded = choices.length > 0;
     $("recommended").classList.toggle("hidden", !recommendationsLoaded || !!$("f-query").value.trim());
   } catch (_) {
-    $("recommended").classList.add("hidden");
+    if (!hadRecommendations) $("recommended").classList.add("hidden");
+  } finally {
+    list.classList.remove("is-refreshing");
+    list.setAttribute("aria-busy", "false");
   }
 }
 
@@ -1341,6 +1466,11 @@ function applyCatalogMovie(movie) {
   form.year = yearOf(movie);
   form.genre = genreOf(movie);
   form.tmdbId = movie.id;
+  form.overview = (movie.overview || "").trim();
+  form.runtime = Number(movie.runtime) || form.runtime || 0;
+  form.director = directorsOf(movie) || form.director || "";
+  form.tmdbRating = Number(movie.vote_average) || form.tmdbRating || 0;
+  form.tmdbVoteCount = Number(movie.vote_count) || form.tmdbVoteCount || 0;
   form.poster = tmdbPoster(movie.poster_path, "w500");
   form.posterPreview = tmdbPoster(movie.poster_path, "w92");
   form.backdrop = movie.backdrop_path
@@ -1358,13 +1488,18 @@ async function selectMovie(movie) {
   rememberMovie(movie);
   closeSearchKeyboard();
   try {
-    const films = await store.getAll();
+    const [films, details] = await Promise.all([
+      store.getAll(),
+      loadMovieDetails(movie.id).catch(() => null),
+    ]);
     const existing = films.find((film) => Number(film.movieId || film.tmdbId) === Number(movie.id));
     duplicatePendingMovie = existing ? movie : null;
     duplicatePendingEntry = existing || null;
     editingEntryId = null;
     editingOriginalDate = "";
-    applyCatalogMovie(movie);
+    applyCatalogMovie(details
+      ? { ...movie, ...details, overview: details.overview || movie.overview }
+      : movie);
     syncGenreAccent(form.genre);
     haptic("impact", existing ? "medium" : "rigid");
     showSelectedMovie(true);
@@ -1382,6 +1517,10 @@ function fillFormFromEntry(film, preserveNotes) {
     tmdbId: film.movieId || film.tmdbId || null,
     poster: film.poster || "", posterPreview: film.posterPreview || "",
     backdrop: film.backdrop || "", backdropPreview: film.backdropPreview || "",
+    runtime: Number(film.runtime) || 0,
+    director: film.director || "",
+    tmdbRating: Number(film.tmdbRating) || 0,
+    tmdbVoteCount: Number(film.tmdbVoteCount) || 0,
     scores: preserveNotes ? { ...fresh.scores, ...(film.scores || {}) } : { ...fresh.scores },
     personal: preserveNotes ? Number(film.personal || 5) : fresh.personal,
     liked: preserveNotes ? film.liked || "" : "",
@@ -1424,6 +1563,7 @@ function rerateExistingEntry(film, movie = null) {
 }
 
 function showSelectedMovie(fromCatalog) {
+  const keyboardWasOpen = document.body.classList.contains("keyboard-open");
   closeSearchKeyboard();
   $("f-query").value = "";
   resetSearchView();
@@ -1432,7 +1572,13 @@ function showSelectedMovie(fromCatalog) {
   $("f-genre").value = form.genre;
   $("chip-year").textContent = form.year || "Год не указан";
   $("chip-genre").textContent = form.genre;
+  $("chip-runtime").textContent = formatRuntime(form.runtime);
+  $("chip-runtime").classList.toggle("hidden", !fromCatalog || !form.runtime);
   $("hero-chips").classList.toggle("hidden", !fromCatalog);
+  $("hero-director-name").textContent = form.director;
+  $("hero-director").classList.toggle("hidden", !fromCatalog || !form.director);
+  $("hero-overview").textContent = form.overview;
+  $("hero-overview").classList.toggle("hidden", !fromCatalog || !form.overview);
   document.querySelector(".hero-fields").classList.toggle("hidden", fromCatalog);
   setBlurBackground(
     document.body,
@@ -1446,6 +1592,7 @@ function showSelectedMovie(fromCatalog) {
   $("film-hero").classList.remove("hidden");
   $("film-hero").classList.toggle("hero-contain", !form.backdrop || form.backdrop === form.poster);
   showStep(0); // обновить герой-фон и кнопку
+  resetRateScrollPosition(keyboardWasOpen);
 }
 
 function clearFilm() {
@@ -1642,10 +1789,32 @@ function updateStars(suffix) {
   const q = calcQuality(form.scores);
   const five = toFive(q);
   renderStars($("stars-shared"), five);
-  $("stars-" + suffix + "-num").textContent = five + " из 5";
+  $("stars-" + suffix + "-num").textContent = suffix === "2"
+    ? `Ты оценил фильм на ${five} из 5`
+    : `${five} из 5`;
   let tag = verdict(q) + " · " + q.toFixed(1) + "/10";
   if (Math.abs(q - form.personal) >= 2) tag += " · зашло на " + form.personal;
   $("stars-" + suffix + "-tag").textContent = tag;
+}
+
+function syncTmdbComparison() {
+  const node = $("tmdb-comparison");
+  const rating = Number(form.tmdbRating);
+  const votes = Number(form.tmdbVoteCount);
+  if (!rating || !votes) {
+    node.classList.add("hidden");
+    return;
+  }
+  const five = (rating / 2).toLocaleString("ru-RU", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  const voteLabel = new Intl.NumberFormat("ru-RU", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(votes);
+  node.textContent = `У зрителей TMDB — ${five} из 5 · ${voteLabel} оценок`;
+  node.classList.remove("hidden");
 }
 
 // ─── Главная кнопка ──────────────────────────────────────────────
@@ -1698,6 +1867,10 @@ async function saveEntry(review) {
     tmdbId: form.tmdbId, movieId: form.tmdbId,
     poster: form.poster, posterPreview: form.posterPreview,
     backdrop: form.backdrop, backdropPreview: form.backdropPreview,
+    runtime: form.runtime,
+    director: form.director,
+    tmdbRating: form.tmdbRating,
+    tmdbVoteCount: form.tmdbVoteCount,
     scores: { ...form.scores },
     quality: calcQuality(form.scores),
     personal: form.personal,
@@ -1721,6 +1894,8 @@ async function saveEntry(review) {
   $("entry-err").classList.add("hidden");
   haptic("notification", "success");
   clearReviewWorkspace();
+  recommendationsLoaded = false;
+  recommendationPage = 1;
 
   // сброс формы и переход в дневник
   form = emptyForm();
@@ -1872,17 +2047,16 @@ function isFeedInsightCacheFresh(cache, films) {
 
 function aiFeedCard(insight) {
   const text = insight.trim();
-  const sentences = text.match(/^(.+?[.!?])(?:\s+)(.+)$/s);
-  const title = sentences && sentences[1].length <= 180 ? sentences[1] : text;
-  const detail = sentences && title !== text ? sentences[2] : "";
-  return feedCard({
+  const card = feedCard({
     type: "ai",
     label: "Дневник заметил",
-    title,
-    detail,
+    title: text,
+    detail: "",
     action: "diary",
     actionLabel: "Открыть дневник",
   }, 0);
+  card.setAttribute("aria-label", `Дневник заметил: ${text} Открыть дневник`);
+  return card;
 }
 
 function insertAiFeedCard(list, insight, revision) {
@@ -2122,6 +2296,32 @@ async function renderFeed() {
 
 // ─── Дневник: статистика и записи ────────────────────────────────
 
+async function hydrateDiaryMetadata(films) {
+  const missing = films
+    .filter((film) => Number(film.movieId || film.tmdbId) &&
+      (!Number(film.runtime) || !film.director || !Number(film.tmdbRating)))
+    .slice(0, 6);
+  if (!missing.length) return null;
+
+  const enriched = new Map();
+  await Promise.all(missing.map(async (film) => {
+    try {
+      const details = await loadMovieDetails(film.movieId || film.tmdbId);
+      if (!details) return;
+      const updated = {
+        ...film,
+        runtime: Number(details.runtime) || Number(film.runtime) || 0,
+        director: directorsOf(details) || film.director || "",
+        tmdbRating: Number(details.vote_average) || Number(film.tmdbRating) || 0,
+        tmdbVoteCount: Number(details.vote_count) || Number(film.tmdbVoteCount) || 0,
+      };
+      enriched.set(film.id, updated);
+      await store.save(updated);
+    } catch (_) { /* статистика остаётся доступной и без метаданных TMDB */ }
+  }));
+  return films.map((film) => enriched.get(film.id) || film);
+}
+
 async function renderDiary() {
   const list = $("diary-list");
   list.innerHTML = "";
@@ -2142,6 +2342,9 @@ async function renderDiary() {
   renderDiaryFeature(films[0]);
   renderStats(films);
   films.forEach((f) => list.append(filmItem(f)));
+  void hydrateDiaryMetadata(films).then((enriched) => {
+    if (enriched && tab === "diary") renderStats(enriched);
+  });
 }
 
 function renderDiaryFeature(film) {
@@ -2168,7 +2371,7 @@ function renderDiaryFeature(film) {
 }
 
 function renderStats(films) {
-  // плашки: сколько фильмов, средняя оценка (по 5-балльной), любимый жанр
+  // плашки: сколько фильмов, средняя оценка, любимый жанр и время просмотра
   $("st-total").textContent = films.length;
   $("diary-praise").textContent = films.length <= 4
     ? "Начало положено!"
@@ -2184,6 +2387,8 @@ function renderStats(films) {
   films.forEach((f) => { byGenre[f.genre] = (byGenre[f.genre] || 0) + 1; });
   const sorted = Object.entries(byGenre).sort((a, b) => b[1] - a[1]);
   $("st-genre").textContent = sorted[0][0];
+  const totalRuntime = films.reduce((sum, film) => sum + Math.max(0, Number(film.runtime) || 0), 0);
+  $("st-runtime").textContent = formatRuntime(totalRuntime);
 
   // распределение по звёздам 1–5
   const dist = $("dist");
@@ -2215,6 +2420,42 @@ function renderStats(films) {
     row.append(top, track);
     gb.append(row);
   });
+
+  const byDirector = new Map();
+  films.forEach((film) => {
+    String(film.director || "").split(",").map((name) => name.trim()).filter(Boolean)
+      .forEach((name) => {
+        const current = byDirector.get(name) || { count: 0, quality: 0 };
+        current.count += 1;
+        current.quality += toFive(film.quality);
+        byDirector.set(name, current);
+      });
+  });
+  const directors = [...byDirector.entries()]
+    .map(([name, data]) => ({ name, ...data, average: data.quality / data.count }))
+    .sort((a, b) => b.count - a.count || b.average - a.average)
+    .slice(0, 3);
+  const directorCard = $("director-card");
+  const directorBars = $("director-bars");
+  directorBars.innerHTML = "";
+  directorCard.classList.toggle("hidden", !directors.length);
+  if (directors.length) {
+    const maxDirectorCount = directors[0].count;
+    directors.forEach((director) => {
+      const row = el("div", "director-row");
+      const copy = el("div", "director-copy");
+      copy.append(
+        el("div", "director-name", director.name),
+        el("div", "director-meta", `${director.count} ${filmsWord(director.count)} · средняя ${director.average.toFixed(1)}`),
+      );
+      const track = el("div", "director-track");
+      const fill = el("div", "director-fill");
+      fill.style.width = `${(director.count / maxDirectorCount) * 100}%`;
+      track.append(fill);
+      row.append(copy, track);
+      directorBars.append(row);
+    });
+  }
 }
 
 function filmItem(f) {
@@ -2511,7 +2752,8 @@ function rubberbandPull(distance) {
 }
 
 function canStartPull(target) {
-  if (pullRefreshing || tab === "rate" || window.scrollY > 0) return false;
+  const canRefreshCatalog = tab === "rate" && step === 0 && !form.title;
+  if (pullRefreshing || (tab === "rate" && !canRefreshCatalog) || window.scrollY > 0) return false;
   if (document.body.classList.contains("modal-open") ||
       document.body.classList.contains("onboarding-open") ||
       document.body.classList.contains("search-active")) return false;
@@ -2544,7 +2786,9 @@ function movePull(clientY) {
 }
 
 async function refreshVisibleTab() {
-  if (tab === "feed") await renderFeed();
+  if (tab === "rate" && step === 0 && !form.title) {
+    await Promise.all([loadPopular(true), loadRecommendations(true)]);
+  } else if (tab === "feed") await renderFeed();
   else if (tab === "diary") await renderDiary();
   else if (tab === "profile") {
     syncProfileAvatar();
@@ -2616,7 +2860,10 @@ GENRES.forEach((g) => $("f-genre").append(new Option(g, g)));
 buildSliders();
 
 $("f-query").addEventListener("input", onQueryInput);
-$("f-query").addEventListener("focus", () => setSearchMode(true));
+$("f-query").addEventListener("focus", () => {
+  setSearchMode(true);
+  resetRateScrollPosition();
+});
 $("btn-query-clear").addEventListener("click", clearSearchQuery);
 $("btn-search-cancel").addEventListener("click", () => {
   $("f-query").value = "";
@@ -2624,16 +2871,19 @@ $("btn-search-cancel").addEventListener("click", () => {
   resetSearchView();
 });
 if (window.visualViewport) {
-  ["resize", "scroll"].forEach((event) => window.visualViewport.addEventListener(event, () => {
-    syncSearchViewport();
-    syncKeyboardViewport();
-  }));
+  ["resize", "scroll"].forEach((event) =>
+    window.visualViewport.addEventListener(event, scheduleViewportSync));
 }
-$("btn-clear").addEventListener("click", clearFilm);
+window.addEventListener("orientationchange", () => setTimeout(() => {
+  if (!(document.activeElement instanceof HTMLInputElement ||
+      document.activeElement instanceof HTMLTextAreaElement ||
+      document.activeElement instanceof HTMLSelectElement)) syncKeyboardViewport();
+}, 300));
 $("btn-hero-primary").addEventListener("click", () => $("btn-primary").click());
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
-  if (step === 0) requestRateExit();
+  if (step === 0 && form.title) clearFilm();
+  else if (step === 0) requestRateExit();
   else if (step === 1 && ratingCriterionIndex > 0) moveRatingCriterion(ratingCriterionIndex - 1);
   else if (step === 1) showStep(0);
   else showStep(step - 1);
@@ -2727,13 +2977,10 @@ document.addEventListener("focusin", (event) => {
   if (tab !== "rate" || !(event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement)) return;
   setTimeout(() => {
-    syncKeyboardViewport();
-    if (document.body.classList.contains("keyboard-open")) {
-      event.target.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }, 180);
+    if (syncKeyboardViewport()) keepFocusedControlVisible(event.target);
+  }, 260);
 });
-document.addEventListener("focusout", () => setTimeout(syncKeyboardViewport, 120));
+document.addEventListener("focusout", () => setTimeout(syncKeyboardViewport, 320));
 $("btn-onboarding-next").addEventListener("click", () => {
   if (!selectedOnboardingGenres.size) {
     $("onboarding-genres").classList.add("needs-choice");
