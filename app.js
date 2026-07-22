@@ -333,9 +333,10 @@ const STEP_TITLES = ["Выбери фильм", "Оценки", "Ну как?", 
 const TAB_INDEX = { rate: 0, feed: 1, diary: 2, profile: 3 };
 const SEARCH_CACHE = new Map();
 const MOVIE_DETAILS_CACHE = new Map();
+const DIRECTOR_MOVIES_CACHE = new Map();
 const RECENT_MOVIES_KEY = "kino_recent_movies_v1";
 const REVIEW_DRAFT_KEY = "kino_review_draft_v1";
-const AI_FEED_KEY = "kino_ai_feed_v1";
+const AI_FEED_KEY = "kino_ai_feed_v2";
 const AI_MIN_DRAFT_CHARS = 20;
 const AI_REVIEW_ENDPOINT = String(
   document.querySelector('meta[name="kino-ai-endpoint"]')?.content || ""
@@ -346,6 +347,8 @@ const AI_FEED_ENDPOINT = String(
 let geminiRequestController = null;
 let aiFeedRequestController = null;
 let feedRenderRevision = 0;
+let overviewDisclosureFrame = 0;
+let overviewExpanded = false;
 
 // ─── Черновик рецензии и Gemini ─────────────────────────────────
 
@@ -1192,6 +1195,20 @@ async function loadMovieDetails(movieId) {
   return MOVIE_DETAILS_CACHE.get(id);
 }
 
+async function loadDirectorMovies(personId) {
+  const id = Number(personId);
+  if (!id) return null;
+  if (!DIRECTOR_MOVIES_CACHE.has(id)) {
+    const request = tmdb(`/person/${id}/movie_credits`)
+      .catch((error) => {
+        DIRECTOR_MOVIES_CACHE.delete(id);
+        throw error;
+      });
+    DIRECTOR_MOVIES_CACHE.set(id, request);
+  }
+  return DIRECTOR_MOVIES_CACHE.get(id);
+}
+
 function movieCard(movie, compact = false) {
   const button = el("button", compact ? "movie-card compact popular-card" : "movie-card search-result");
   button.type = "button";
@@ -1562,6 +1579,45 @@ function rerateExistingEntry(film, movie = null) {
   showStep(1);
 }
 
+function scheduleOverviewDisclosure(reset = false) {
+  if (reset) overviewExpanded = false;
+  cancelAnimationFrame(overviewDisclosureFrame);
+  const overview = $("hero-overview");
+  const toggle = $("btn-overview-toggle");
+  overview.classList.remove("is-collapsed");
+  toggle.classList.add("hidden");
+  toggle.setAttribute("aria-expanded", String(overviewExpanded));
+
+  if (tab !== "rate" || step !== 0 || overview.classList.contains("hidden")) return;
+  overviewDisclosureFrame = requestAnimationFrame(() => {
+    overviewDisclosureFrame = 0;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const buttonBottom = $("btn-hero-primary").getBoundingClientRect().bottom + window.scrollY;
+    const needsDisclosure = buttonBottom > viewportHeight - 8;
+
+    if (!needsDisclosure) {
+      overviewExpanded = false;
+      toggle.setAttribute("aria-expanded", "false");
+      return;
+    }
+
+    toggle.classList.remove("hidden");
+    overview.classList.toggle("is-collapsed", !overviewExpanded);
+    toggle.textContent = overviewExpanded ? "Свернуть описание" : "Показать описание";
+    toggle.setAttribute("aria-expanded", String(overviewExpanded));
+  });
+}
+
+function toggleOverview() {
+  overviewExpanded = !overviewExpanded;
+  $("hero-overview").classList.toggle("is-collapsed", !overviewExpanded);
+  $("btn-overview-toggle").textContent = overviewExpanded
+    ? "Свернуть описание"
+    : "Показать описание";
+  $("btn-overview-toggle").setAttribute("aria-expanded", String(overviewExpanded));
+  haptic("selection");
+}
+
 function showSelectedMovie(fromCatalog) {
   const keyboardWasOpen = document.body.classList.contains("keyboard-open");
   closeSearchKeyboard();
@@ -1593,6 +1649,7 @@ function showSelectedMovie(fromCatalog) {
   $("film-hero").classList.toggle("hero-contain", !form.backdrop || form.backdrop === form.poster);
   showStep(0); // обновить герой-фон и кнопку
   resetRateScrollPosition(keyboardWasOpen);
+  scheduleOverviewDisclosure(true);
 }
 
 function clearFilm() {
@@ -1621,6 +1678,9 @@ function clearFilm() {
   syncGenreAccent(null);
   $("film-search").classList.remove("hidden");
   $("film-hero").classList.add("hidden");
+  $("hero-overview").classList.remove("is-collapsed");
+  $("btn-overview-toggle").classList.add("hidden");
+  overviewExpanded = false;
   $("hero-chips").classList.add("hidden");
   document.querySelector(".hero-fields").classList.remove("hidden");
   resetSearchView();
@@ -2031,6 +2091,75 @@ function buildFeedStats(films) {
   };
 }
 
+function directorCreditOf(details) {
+  return (details?.credits?.crew || []).find(
+    (person) => person.job === "Director" && Number(person.id) && person.name
+  ) || null;
+}
+
+function catalogSource(details, fallbackFilm, director) {
+  return {
+    title: details.title || fallbackFilm.title,
+    originalTitle: details.original_title || "",
+    year: Number(yearOf(details) || fallbackFilm.year),
+    releaseDate: details.release_date || "",
+    director: director?.name || directorsOf(details) || fallbackFilm.director || "",
+    runtime: Number(details.runtime) || Number(fallbackFilm.runtime) || 0,
+    budget: Number(details.budget) || 0,
+    revenue: Number(details.revenue) || 0,
+    productionCountries: (details.production_countries || []).map((country) => country.name).filter(Boolean),
+    collection: details.belongs_to_collection?.name || "",
+    tmdbRating: Number(details.vote_average) || 0,
+    tmdbVoteCount: Number(details.vote_count) || 0,
+  };
+}
+
+function otherDirectorFilms(credits, sourceId, ratedIds) {
+  const unique = new Map();
+  (credits?.crew || []).forEach((movie) => {
+    if (movie.job !== "Director" || !movie.title || Number(movie.id) === Number(sourceId) ||
+        ratedIds.has(Number(movie.id))) return;
+    const year = Number(yearOf(movie));
+    if (!year) return;
+    const previous = unique.get(movie.id);
+    if (!previous || Number(movie.vote_count) > Number(previous.vote_count)) unique.set(movie.id, movie);
+  });
+  return [...unique.values()]
+    .sort((a, b) => Number(b.vote_count || 0) - Number(a.vote_count || 0) ||
+      Number(b.popularity || 0) - Number(a.popularity || 0))
+    .slice(0, 6)
+    .map((movie) => ({ title: movie.title, year: Number(yearOf(movie)) }));
+}
+
+async function buildFeedCatalog(films) {
+  const seeds = films.filter((film) => Number(film.movieId || film.tmdbId)).slice(0, 6);
+  if (!seeds.length) return null;
+  const ratedIds = new Set(films.map((film) => Number(film.movieId || film.tmdbId)).filter(Boolean));
+  const start = Math.floor(Date.now() / DAY_MS) % seeds.length;
+
+  for (let offset = 0; offset < seeds.length; offset++) {
+    const film = seeds[(start + offset) % seeds.length];
+    const movieId = Number(film.movieId || film.tmdbId);
+    try {
+      const details = await loadMovieDetails(movieId);
+      if (!details) continue;
+      const director = directorCreditOf(details);
+      let related = [];
+      if (director) {
+        const credits = await loadDirectorMovies(director.id).catch(() => null);
+        related = otherDirectorFilms(credits, movieId, ratedIds);
+      }
+      return {
+        source: catalogSource(details, film, director),
+        otherFilmsByDirector: related,
+      };
+    } catch (_) {
+      // Пробуем следующую запись: один недоступный фильм не должен ломать всю ленту.
+    }
+  }
+  return null;
+}
+
 function feedCacheFilmId(films) {
   return String(films[0]?.entryId || films[0]?.id || "");
 }
@@ -2048,25 +2177,25 @@ function isFeedInsightCacheFresh(cache, films) {
 function aiFeedCard(insight) {
   const text = insight.trim();
   const card = feedCard({
-    type: "ai",
-    label: "Дневник заметил",
+    type: "ai-fact",
+    label: "А ты знал?",
     title: text,
     detail: "",
     action: "diary",
     actionLabel: "Открыть дневник",
   }, 0);
-  card.setAttribute("aria-label", `Дневник заметил: ${text} Открыть дневник`);
+  card.setAttribute("aria-label", `А ты знал? ${text} Открыть дневник`);
   return card;
 }
 
 function insertAiFeedCard(list, insight, revision) {
   if (revision !== feedRenderRevision || list !== $("feed-list") || !list.isConnected) return;
-  list.querySelector(".feed-card--ai")?.remove();
+  list.querySelector(".feed-card--ai-fact")?.remove();
   list.prepend(aiFeedCard(insight));
 }
 
 async function maybeRenderAiFeedCard(films, list, revision) {
-  if (films.length < 3) return;
+  if (!films.length) return;
 
   const cache = await loadFeedInsightCache();
   if (revision !== feedRenderRevision) return;
@@ -2076,6 +2205,9 @@ async function maybeRenderAiFeedCard(films, list, revision) {
   }
   if (!AI_FEED_ENDPOINT) return;
 
+  const catalog = await buildFeedCatalog(films);
+  if (revision !== feedRenderRevision || !catalog) return;
+
   const controller = new AbortController();
   aiFeedRequestController = controller;
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -2083,7 +2215,11 @@ async function maybeRenderAiFeedCard(films, list, revision) {
     const response = await fetch(AI_FEED_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stats: buildFeedStats(films) }),
+      body: JSON.stringify({
+        stats: buildFeedStats(films),
+        catalog,
+        previousInsight: cache?.insight || "",
+      }),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));
@@ -2272,14 +2408,12 @@ async function renderFeed() {
     return;
   }
 
-  if (films.length <= 2) {
+  if (!films.length) {
     const empty = el("section", "feed-empty");
     empty.append(el("div", "feed-empty-mark", "•••"));
-    empty.append(el("h2", "", films.length ? "Лента уже присматривается" : "Здесь появится твоя лента"));
-    empty.append(el("p", "", films.length
-      ? `Ещё ${3 - films.length} ${films.length === 1 ? "оценки" : "оценка"} — и дневник начнёт замечать твои привычки и любимые жанры.`
-      : "Оцени несколько фильмов, и дневник начнёт находить закономерности в твоём вкусе."));
-    const cta = el("button", "primary feed-empty-cta", films.length ? "Оценить ещё фильм" : "Оценить первый фильм");
+    empty.append(el("h2", "", "Здесь появится твоя лента"));
+    empty.append(el("p", "", "Оцени первый фильм — Gemini найдёт для ленты реальный факт о нём, а дневник начнёт замечать твой вкус."));
+    const cta = el("button", "primary feed-empty-cta", "Оценить первый фильм");
     cta.type = "button";
     cta.addEventListener("click", () => {
       haptic("impact", "rigid");
@@ -2287,6 +2421,20 @@ async function renderFeed() {
     });
     empty.append(cta);
     list.append(empty);
+    return;
+  }
+
+  if (films.length <= 2) {
+    const starter = el("section", "feed-starter");
+    starter.append(el("span", "feed-starter-mark", "Лента собирается"));
+    starter.append(el("h2", "", "Уже есть что рассказать"));
+    starter.append(el("p", "", `Gemini подготовит факт о твоём кино. Ещё ${3 - films.length} ${films.length === 1 ? "оценки" : "оценка"} — и здесь появятся закономерности твоего вкуса.`));
+    const cta = el("button", "feed-starter-action", "Оценить ещё фильм");
+    cta.type = "button";
+    cta.addEventListener("click", () => showTab("rate"));
+    starter.append(cta);
+    list.append(starter);
+    void maybeRenderAiFeedCard(films, list, revision);
     return;
   }
 
@@ -2738,12 +2886,107 @@ async function finishOnboarding() {
 
 // ─── Запуск ──────────────────────────────────────────────────────
 const PULL_REFRESH_THRESHOLD = 62;
+const SWIPE_TABS = ["rate", "feed", "diary", "profile"];
+const SWIPE_AXIS_LOCK = 18;
 let pullStartY = 0;
 let pullCurrent = 0;
 let pullTracking = false;
 let pullRefreshing = false;
 let pullMouseTracking = false;
 let touchGuardStartY = 0;
+let tabSwipe = null;
+let suppressClickUntil = 0;
+
+function canStartTabSwipe(target) {
+  if (document.body.classList.contains("modal-open") ||
+      document.body.classList.contains("onboarding-open") ||
+      document.body.classList.contains("search-active") ||
+      document.body.classList.contains("keyboard-open")) return false;
+  if (tab === "rate" && (step !== 0 || form.title)) return false;
+  return !target.closest(
+    "input, textarea, select, [contenteditable], dialog, .tabbar, " +
+    "#popular-list, #recommended-list, #results, .criteria-viewport, .favorites-picker-list"
+  );
+}
+
+function beginTabSwipe(clientX, clientY, target) {
+  tabSwipe = canStartTabSwipe(target) ? {
+    startX: clientX,
+    startY: clientY,
+    lastX: clientX,
+    lastY: clientY,
+    startedAt: performance.now(),
+    axis: "",
+  } : null;
+}
+
+function settleTabSwipe() {
+  document.body.classList.remove("tab-swipe-active");
+  document.body.classList.add("tab-swipe-settling");
+  document.body.style.setProperty("--tab-swipe-x", "0px");
+  setTimeout(() => document.body.classList.remove("tab-swipe-settling"), 190);
+}
+
+function moveTabSwipe(clientX, clientY) {
+  if (!tabSwipe) return false;
+  tabSwipe.lastX = clientX;
+  tabSwipe.lastY = clientY;
+  const dx = clientX - tabSwipe.startX;
+  const dy = clientY - tabSwipe.startY;
+  const horizontal = Math.abs(dx);
+  const vertical = Math.abs(dy);
+
+  if (!tabSwipe.axis) {
+    if (Math.max(horizontal, vertical) < SWIPE_AXIS_LOCK) return false;
+    if (horizontal > vertical * 1.35) tabSwipe.axis = "x";
+    else {
+      tabSwipe.axis = "y";
+      return false;
+    }
+  }
+  if (tabSwipe.axis !== "x") return false;
+
+  pullTracking = false;
+  setPullDistance(0);
+  document.body.classList.remove("pull-active", "pull-armed", "pull-settling");
+  const currentIndex = SWIPE_TABS.indexOf(tab);
+  const targetIndex = currentIndex + (dx < 0 ? 1 : -1);
+  const atBoundary = targetIndex < 0 || targetIndex >= SWIPE_TABS.length;
+  const visualDistance = Math.max(-76, Math.min(76, dx * (atBoundary ? .14 : .32)));
+  document.body.classList.add("tab-swipe-active");
+  document.body.style.setProperty("--tab-swipe-x", `${visualDistance.toFixed(1)}px`);
+  return true;
+}
+
+function finishTabSwipe(cancelled = false) {
+  if (!tabSwipe) return false;
+  const gesture = tabSwipe;
+  tabSwipe = null;
+  if (gesture.axis !== "x") return false;
+
+  const dx = gesture.lastX - gesture.startX;
+  const distance = Math.abs(dx);
+  const duration = Math.max(1, performance.now() - gesture.startedAt);
+  const velocity = distance / duration;
+  const currentIndex = SWIPE_TABS.indexOf(tab);
+  const targetIndex = currentIndex + (dx < 0 ? 1 : -1);
+  const nextTab = SWIPE_TABS[targetIndex];
+  const distanceThreshold = Math.max(82, Math.min(112, window.innerWidth * .22));
+  const shouldChange = !cancelled && nextTab &&
+    (distance >= distanceThreshold || (distance >= 52 && velocity >= .65));
+
+  suppressClickUntil = performance.now() + 420;
+  if (!shouldChange) {
+    settleTabSwipe();
+    return true;
+  }
+
+  document.body.classList.remove("tab-swipe-active", "tab-swipe-settling");
+  document.body.style.setProperty("--tab-swipe-x", "0px");
+  haptic("selection");
+  showTab(nextTab);
+  return true;
+}
 
 function rubberbandPull(distance) {
   const dimension = Math.max(480, window.innerHeight);
@@ -2825,34 +3068,60 @@ async function finishPull() {
 }
 
 document.addEventListener("touchstart", (event) => {
-  if (event.touches.length !== 1) return;
-  touchGuardStartY = event.touches[0].clientY;
-  beginPull(event.touches[0].clientY, event.target);
+  if (event.touches.length !== 1) {
+    tabSwipe = null;
+    pullTracking = false;
+    return;
+  }
+  const touch = event.touches[0];
+  touchGuardStartY = touch.clientY;
+  beginTabSwipe(touch.clientX, touch.clientY, event.target);
+  beginPull(touch.clientY, event.target);
 }, { passive: true });
 document.addEventListener("touchmove", (event) => {
   if (event.touches.length !== 1) return;
-  const clientY = event.touches[0].clientY;
+  const touch = event.touches[0];
+  const clientY = touch.clientY;
+  if (moveTabSwipe(touch.clientX, clientY)) {
+    event.preventDefault();
+    return;
+  }
   const innerScroller = event.target.closest("#results, .onboarding-screen, dialog");
   const innerCanMove = innerScroller && innerScroller.scrollTop > 0;
   const blocksTelegramCollapse = window.scrollY <= 0 && clientY - touchGuardStartY > 4 && !innerCanMove;
   if (movePull(clientY) || blocksTelegramCollapse) event.preventDefault();
 }, { passive: false });
-document.addEventListener("touchend", finishPull, { passive: true });
-document.addEventListener("touchcancel", finishPull, { passive: true });
+document.addEventListener("touchend", () => {
+  if (!finishTabSwipe()) finishPull();
+}, { passive: true });
+document.addEventListener("touchcancel", () => {
+  if (!finishTabSwipe(true)) finishPull();
+}, { passive: true });
+
+document.addEventListener("click", (event) => {
+  if (!event.isTrusted || performance.now() >= suppressClickUntil) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
 
 document.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;
   pullMouseTracking = true;
+  beginTabSwipe(event.clientX, event.clientY, event.target);
   beginPull(event.clientY, event.target);
 });
 document.addEventListener("mousemove", (event) => {
   if (!pullMouseTracking) return;
+  if (moveTabSwipe(event.clientX, event.clientY)) {
+    event.preventDefault();
+    return;
+  }
   if (movePull(event.clientY)) event.preventDefault();
 });
 document.addEventListener("mouseup", () => {
   if (!pullMouseTracking) return;
   pullMouseTracking = false;
-  finishPull();
+  if (!finishTabSwipe()) finishPull();
 });
 
 
@@ -2873,13 +3142,16 @@ $("btn-search-cancel").addEventListener("click", () => {
 if (window.visualViewport) {
   ["resize", "scroll"].forEach((event) =>
     window.visualViewport.addEventListener(event, scheduleViewportSync));
+  window.visualViewport.addEventListener("resize", () => scheduleOverviewDisclosure());
 }
+window.addEventListener("resize", () => scheduleOverviewDisclosure());
 window.addEventListener("orientationchange", () => setTimeout(() => {
   if (!(document.activeElement instanceof HTMLInputElement ||
       document.activeElement instanceof HTMLTextAreaElement ||
       document.activeElement instanceof HTMLSelectElement)) syncKeyboardViewport();
 }, 300));
 $("btn-hero-primary").addEventListener("click", () => $("btn-primary").click());
+$("btn-overview-toggle").addEventListener("click", toggleOverview);
 $("btn-back").addEventListener("click", () => {
   haptic("impact", "soft");
   if (step === 0 && form.title) clearFilm();

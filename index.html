@@ -10,7 +10,7 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=ui28">
+<link rel="stylesheet" href="style.css?v=ui29">
 </head>
 <body>
 
@@ -93,6 +93,9 @@
         </div>
         <p id="hero-director" class="hero-director hidden">Режиссёр · <strong id="hero-director-name"></strong></p>
         <p id="hero-overview" class="hero-overview hidden"></p>
+        <button id="btn-overview-toggle" class="hero-overview-toggle hidden" type="button" aria-controls="hero-overview" aria-expanded="false">
+          Показать описание
+        </button>
         <!-- фильм, добавленный вручную: год и жанр вводятся -->
         <div class="hero-fields">
           <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
@@ -338,6 +341,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=ui28"></script>
+<script src="app.js?v=ui29"></script>
 </body>
 </html>

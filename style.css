@@ -2435,3 +2435,93 @@ body.immersive:not(.hero) #footer-action {
   }
   body.hero .hero-media { height: 230px; }
 }
+
+/* ─── UI 29: факты Gemini, компактное описание и безопасный свайп ─── */
+body.hero .hero-overview.is-collapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.hero-overview-toggle {
+  display: inline-flex;
+  min-height: 34px;
+  margin: 5px 0 -3px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font: 600 13px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+.hero-overview-toggle:active { color: #fff; }
+
+.feed-card--ai-fact {
+  min-height: 184px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.feed-card--ai-fact::after {
+  content: "✦";
+  position: absolute;
+  top: 13px;
+  right: 16px;
+  color: color-mix(in srgb, var(--accent) 34%, transparent);
+  font-size: 34px;
+  line-height: 1;
+  pointer-events: none;
+}
+.feed-card--ai-fact .feed-card-copy { position: relative; z-index: 1; }
+.feed-card--ai-fact .feed-card-label { padding-right: 42px; }
+.feed-card--ai-fact .feed-card-title {
+  max-width: 28ch;
+  font-size: 22px;
+  line-height: 1.18;
+}
+.feed-card--ai-fact .feed-card-detail { display: none; }
+
+.feed-starter {
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--text) 9%, transparent);
+}
+.feed-starter-mark { color: var(--accent); font-size: 12px; font-weight: 650; }
+.feed-starter h2 { margin-top: 7px; font: 700 21px/1.15 var(--font-sans); letter-spacing: -.02em; }
+.feed-starter p { max-width: 44ch; margin-top: 7px; color: var(--sub); font-size: 13.5px; line-height: 1.48; }
+.feed-starter-action {
+  min-height: 36px;
+  margin-top: 13px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: 650 13px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+body.tab-swipe-active #header,
+body.tab-swipe-active .app-screen:not(.hidden) {
+  transform: translate3d(var(--tab-swipe-x, 0px), 0, 0);
+  transition: none !important;
+  will-change: transform;
+}
+#screen-feed button,
+#screen-diary button,
+#screen-profile button { touch-action: pan-y; }
+body.tab-swipe-settling #header,
+body.tab-swipe-settling .app-screen:not(.hidden) {
+  transform: translate3d(0, 0, 0);
+  transition: transform 180ms cubic-bezier(.22, 1, .36, 1) !important;
+}
+
+@media (max-height: 700px) {
+  body.hero .hero-overview.is-collapsed { -webkit-line-clamp: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.tab-swipe-active #header,
+  body.tab-swipe-active .app-screen:not(.hidden),
+  body.tab-swipe-settling #header,
+  body.tab-swipe-settling .app-screen:not(.hidden) { transform: none; }
+}
