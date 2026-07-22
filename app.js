@@ -381,6 +381,7 @@ let aiFeedRequestController = null;
 let feedRenderRevision = 0;
 let overviewDisclosureFrame = 0;
 let overviewExpanded = false;
+let heroParallaxFrame = 0;
 
 // ─── Черновик рецензии и Gemini ─────────────────────────────────
 
@@ -990,6 +991,7 @@ function showStep(n) {
     syncReviewEditor();
   }
   resetRateScrollPosition();
+  scheduleHeroParallax();
 }
 
 // ─── Шаг 1: выбор фильма ─────────────────────────────────────────
@@ -1640,6 +1642,18 @@ function scheduleOverviewDisclosure(reset = false) {
   });
 }
 
+function scheduleHeroParallax() {
+  if (heroParallaxFrame) return;
+  heroParallaxFrame = requestAnimationFrame(() => {
+    heroParallaxFrame = 0;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const active = tab === "rate" && step === 0 && !!form.title && overviewExpanded && !reducedMotion;
+    const scrollTop = Math.max(window.scrollY, document.documentElement.scrollTop || 0);
+    const offset = active ? Math.min(56, scrollTop * .22) : 0;
+    document.documentElement.style.setProperty("--hero-parallax-y", `${offset.toFixed(1)}px`);
+  });
+}
+
 function toggleOverview() {
   overviewExpanded = !overviewExpanded;
   $("hero-overview").classList.toggle("is-collapsed", !overviewExpanded);
@@ -1647,6 +1661,7 @@ function toggleOverview() {
     ? "Свернуть описание"
     : "Показать описание";
   $("btn-overview-toggle").setAttribute("aria-expanded", String(overviewExpanded));
+  scheduleHeroParallax();
   haptic("selection");
 }
 
@@ -1681,6 +1696,7 @@ function showSelectedMovie(fromCatalog) {
   $("film-hero").classList.toggle("hero-contain", !form.backdrop || form.backdrop === form.poster);
   showStep(0); // обновить герой-фон и кнопку
   resetRateScrollPosition(keyboardWasOpen);
+  document.documentElement.style.setProperty("--hero-parallax-y", "0px");
   scheduleOverviewDisclosure(true);
 }
 
@@ -1713,6 +1729,7 @@ function clearFilm() {
   $("hero-overview").classList.remove("is-collapsed");
   $("btn-overview-toggle").classList.add("hidden");
   overviewExpanded = false;
+  document.documentElement.style.setProperty("--hero-parallax-y", "0px");
   $("hero-chips").classList.add("hidden");
   document.querySelector(".hero-fields").classList.remove("hidden");
   resetSearchView();
@@ -3217,6 +3234,7 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", () => scheduleOverviewDisclosure());
 }
 window.addEventListener("resize", () => scheduleOverviewDisclosure());
+window.addEventListener("scroll", scheduleHeroParallax, { passive: true });
 window.addEventListener("orientationchange", () => setTimeout(() => {
   if (!(document.activeElement instanceof HTMLInputElement ||
       document.activeElement instanceof HTMLTextAreaElement ||

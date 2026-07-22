@@ -12,6 +12,7 @@
   --genre-accent: var(--accent);
   --hero-preview: none;
   --hero-image: none;
+  --hero-parallax-y: 0px;
   --rating-low: #ff3b30;
   --gold: #8a6400;
   --teal: #248a3d;
@@ -2541,4 +2542,23 @@ body.tab-swipe-settling .app-screen:not(.hidden) {
   body.tab-swipe-active .app-screen:not(.hidden),
   body.tab-swipe-settling #header,
   body.tab-swipe-settling .app-screen:not(.hidden) { transform: none; }
+}
+
+/* ─── UI 31: лёгкий параллакс постера и более высокий фон оценок ─── */
+body.hero .hero-media {
+  transform: translate3d(0, var(--hero-parallax-y), 0);
+  will-change: transform;
+}
+
+#step-1 .rating-film {
+  height: clamp(132px, 20svh, 168px);
+  margin-bottom: 12px;
+}
+
+@media (max-height: 700px) {
+  #step-1 .rating-film { height: clamp(124px, 20svh, 140px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.hero .hero-media { transform: none; will-change: auto; }
 }
