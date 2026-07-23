@@ -477,10 +477,11 @@ body.feed-has-hero #screen-feed { margin-top: 0; }
 .feed-hero::before { filter: blur(16px) saturate(.88); }
 .feed-hero::after {
   z-index: -2;
-  inset: 64px -18px -34px;
   background-image: var(--feed-hero-image);
   opacity: 0;
   filter: blur(10px) saturate(.92);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 34%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 34%);
   transition:
     opacity 420ms var(--ease-out),
     transform var(--motion-hero) var(--ease-out),
@@ -1090,6 +1091,8 @@ body.hero-image-loaded .hero-media::after {
   background-position: center 74px;
   background-size: auto 70%;
   background-repeat: no-repeat;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 34%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 34%);
 }
 .hero-wrap.hero-contain .hero-media::before,
 .hero-wrap.hero-contain .hero-media::after {
