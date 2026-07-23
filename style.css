@@ -73,10 +73,9 @@
   --film-copy-y: 0px;
   --film-copy-opacity: 1;
   --feed-parallax-y: 0px;
-  --feed-title-y: 0px;
   --feed-brand-opacity: 1;
-  --hero-shade-opacity: 1;
-  --feed-shade-opacity: 1;
+  --hero-shade-opacity: .88;
+  --feed-shade-opacity: .88;
   --pull-distance: 0px;
   --film-hero-height: clamp(420px, 56svh, 540px);
 }
@@ -561,8 +560,6 @@ body.feed-has-hero #screen-feed { margin-top: 0; }
   font: 740 clamp(29px, 8vw, 38px)/1.02 var(--font-display);
   letter-spacing: -.046em;
   text-wrap: balance;
-  transform: translate3d(0, var(--feed-title-y), 0);
-  will-change: transform;
 }
 .feed-hero-meta {
   margin-top: 10px;
@@ -2089,7 +2086,6 @@ body.tab-swipe-settling .app-screen:not(.hidden) {
     --film-parallax-y: 0px !important;
     --film-copy-y: 0px !important;
     --feed-parallax-y: 0px !important;
-    --feed-title-y: 0px !important;
   }
   *,
   *::before,

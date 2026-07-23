@@ -1683,24 +1683,18 @@ function scheduleHeroParallax() {
     const filmY = !reducedMotion && filmActive ? Math.min(42, scrollTop * .16) : 0;
     const filmCopyY = !reducedMotion && filmActive ? Math.min(18, scrollTop * .08) : 0;
     const feedY = !reducedMotion && feedActive ? Math.min(28, scrollTop * .12) : 0;
-    const feedTitleY = !reducedMotion && feedActive ? Math.min(10, scrollTop * .05) : 0;
     const filmCopyOpacity = !reducedMotion && filmActive
       ? Math.max(.82, 1 - scrollTop / 1000)
       : 1;
     const feedBrandOpacity = !reducedMotion && feedActive
       ? Math.max(0, 1 - scrollTop / 190)
       : 1;
-    const heroShadeOpacity = 1;
-    const feedShadeOpacity = 1;
     const root = document.documentElement.style;
     root.setProperty("--film-parallax-y", `${filmY.toFixed(1)}px`);
     root.setProperty("--film-copy-y", `${filmCopyY.toFixed(1)}px`);
     root.setProperty("--film-copy-opacity", filmCopyOpacity.toFixed(3));
     root.setProperty("--feed-parallax-y", `${feedY.toFixed(1)}px`);
-    root.setProperty("--feed-title-y", `${feedTitleY.toFixed(1)}px`);
     root.setProperty("--feed-brand-opacity", feedBrandOpacity.toFixed(3));
-    root.setProperty("--hero-shade-opacity", heroShadeOpacity.toFixed(3));
-    root.setProperty("--feed-shade-opacity", feedShadeOpacity.toFixed(3));
     document.body.classList.toggle("hero-scrolled", filmActive && scrollTop >= 80);
   });
 }
