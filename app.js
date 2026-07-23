@@ -1,4 +1,4 @@
-// Кинодневник — логика мини-аппа (дизайн из Claude Design).
+// SYO — логика Telegram Mini App для личного пространства о кино.
 // Оценка проходит в 4 шага: фильм → оценки → итог с заметками → запись.
 // Хранение: облако Telegram (CloudStorage); вне Telegram — localStorage.
 
@@ -10,6 +10,17 @@ const tg = window.Telegram ? window.Telegram.WebApp : null;
 // initData не пустой только внутри настоящего Telegram
 const inTelegram = !!(tg && tg.initData);
 let fullscreenUnavailable = false;
+
+document.documentElement.classList.toggle("is-telegram", inTelegram);
+
+function syncTelegramModeClass() {
+  document.documentElement.classList.toggle(
+    "is-telegram-fullscreen",
+    inTelegram && !!tg?.isFullscreen,
+  );
+}
+
+syncTelegramModeClass();
 
 function lockTelegramVerticalSwipes() {
   if (!inTelegram || !tg || typeof tg.disableVerticalSwipes !== "function") return;
@@ -68,6 +79,7 @@ function syncTelegramInsets() {
   // Telegram и CSS сами сообщают safe area; не подгоняем отступ под модель iPhone.
   const extraInset = Math.max(0, measuredInset - cssInset);
   document.documentElement.style.setProperty("--telegram-header-inset", `${extraInset}px`);
+  syncTelegramModeClass();
 }
 
 syncTelegramInsets();
@@ -391,8 +403,6 @@ let recommendationsLoaded = false;
 let recommendationPage = 1;
 let popularMovies = [];
 let popularAnimationFrame = 0;
-let popularPauseUntil = 0;
-let popularLastFrame = 0;
 let popularPosition = 0;
 let activeStarsMorph = null;
 let editingEntryId = null;
@@ -403,7 +413,7 @@ let profile = {};
 let profileReturnTab = "feed";
 let profileDraftFavorites = [];
 let selectedOnboardingGenres = new Set();
-let selectedFrequency = "";
+let selectedFrequency = "balanced";
 let reviewMode = "self";
 let ratingCriterionIndex = 0;
 let diaryView = "history";
@@ -901,7 +911,12 @@ async function showTab(name) {
   if (name === "rate") {
     if (!popularLoaded) loadPopular();
     if (!recommendationsLoaded) loadRecommendations();
+    if (step === 0 && !form.title) requestAnimationFrame(() => {
+      const popularList = $("popular-list");
+      if (popularList) popularList.scrollLeft = 0;
+    });
   }
+  scheduleHeroParallax();
   if (name === "feed") return renderFeed();
   if (name === "diary") return renderDiary();
   if (name === "profile") return renderProfile();
@@ -960,10 +975,15 @@ function moveSharedStars(targetSlot, previousRect = null) {
 }
 
 function syncRateHeader() {
-  $("head-title").textContent = editingEntryId && step === 2
-    ? "Что изменилось?"
-    : STEP_TITLES[step];
+  const selectedFilmHero = step === 0 && !!form.title;
+  $("head-title").textContent = selectedFilmHero
+    ? "Оценка фильма"
+    : editingEntryId && step === 2
+      ? "Что изменилось?"
+      : STEP_TITLES[step];
   $("head-sub").textContent = `Шаг ${step + 1} из 4`;
+  $("head-film-compact").textContent = selectedFilmHero ? form.title : "";
+  $("head-film-compact").setAttribute("aria-hidden", String(!selectedFilmHero));
   $("head-sub").classList.remove("hidden");
   $("progress").classList.remove("hidden");
   $("btn-back").setAttribute(
@@ -1353,62 +1373,16 @@ function mixRecommendationGroups(groups, ratedIds, limit = 20) {
   return mixed;
 }
 
-function normalizePopularPosition(container) {
-  const segment = Number(container.dataset.segmentWidth || 0);
-  if (!segment) return;
-  if (popularPosition < segment * .5) popularPosition += segment;
-  else if (popularPosition >= segment * 1.5) popularPosition -= segment;
-  container.scrollLeft = popularPosition;
-}
-
-function pausePopularMarquee(duration = 8000) {
-  popularPauseUntil = performance.now() + duration;
-}
-
-function startPopularMarquee() {
-  cancelAnimationFrame(popularAnimationFrame);
-  popularLastFrame = 0;
-  const container = $("popular-list");
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const tick = (time) => {
-    const delta = popularLastFrame ? Math.min(34, time - popularLastFrame) : 0;
-    popularLastFrame = time;
-    if (time < popularPauseUntil) popularPosition = container.scrollLeft;
-    normalizePopularPosition(container);
-    if (time >= popularPauseUntil && !document.hidden && !$("popular").classList.contains("hidden"))
-      popularPosition += delta * .018;
-    popularAnimationFrame = requestAnimationFrame(tick);
-  };
-  popularAnimationFrame = requestAnimationFrame(tick);
-}
-
 function renderPopularMarquee(movies) {
   const container = $("popular-list");
   container.innerHTML = "";
   const selection = movies.slice(0, 12);
-  for (let copy = 0; copy < 3; copy++) {
-    selection.forEach((movie) => {
-      const card = movieCard(movie, true);
-      card.dataset.marqueeCopy = String(copy);
-      if (copy !== 1) {
-        card.tabIndex = -1;
-        card.setAttribute("aria-hidden", "true");
-      }
-      container.append(card);
-    });
-  }
-  if (!container.dataset.motionBound) {
-    ["pointerdown", "touchstart", "wheel"].forEach((event) =>
-      container.addEventListener(event, () => pausePopularMarquee(), { passive: true }));
-    container.dataset.motionBound = "true";
-  }
+  selection.forEach((movie) => container.append(movieCard(movie, true)));
+  cancelAnimationFrame(popularAnimationFrame);
+  popularPosition = 0;
   requestAnimationFrame(() => {
-    const segment = container.children[selection.length]?.offsetLeft - container.children[0]?.offsetLeft;
-    if (!segment) return;
-    container.dataset.segmentWidth = String(segment);
-    popularPosition = segment;
-    container.scrollLeft = segment;
-    startPopularMarquee();
+    container.scrollLeft = 0;
+    delete container.dataset.segmentWidth;
   });
 }
 
@@ -1703,10 +1677,35 @@ function scheduleHeroParallax() {
   heroParallaxFrame = requestAnimationFrame(() => {
     heroParallaxFrame = 0;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const active = tab === "rate" && step === 0 && !!form.title && overviewExpanded && !reducedMotion;
     const scrollTop = Math.max(window.scrollY, document.documentElement.scrollTop || 0);
-    const offset = active ? Math.min(56, scrollTop * .22) : 0;
-    document.documentElement.style.setProperty("--hero-parallax-y", `${offset.toFixed(1)}px`);
+    const filmActive = tab === "rate" && step === 0 && !!form.title;
+    const feedActive = tab === "feed" && !$("feed-hero").classList.contains("hidden");
+    const filmY = !reducedMotion && filmActive ? Math.min(42, scrollTop * .16) : 0;
+    const filmCopyY = !reducedMotion && filmActive ? Math.min(18, scrollTop * .08) : 0;
+    const feedY = !reducedMotion && feedActive ? Math.min(28, scrollTop * .12) : 0;
+    const feedTitleY = !reducedMotion && feedActive ? Math.min(10, scrollTop * .05) : 0;
+    const filmCopyOpacity = !reducedMotion && filmActive
+      ? Math.max(.82, 1 - scrollTop / 1000)
+      : 1;
+    const feedBrandOpacity = !reducedMotion && feedActive
+      ? Math.max(0, 1 - scrollTop / 190)
+      : 1;
+    const heroShadeOpacity = !reducedMotion && filmActive
+      ? Math.min(1, .85 + scrollTop / 500)
+      : .85;
+    const feedShadeOpacity = !reducedMotion && feedActive
+      ? Math.min(1, .84 + scrollTop / 520)
+      : .84;
+    const root = document.documentElement.style;
+    root.setProperty("--film-parallax-y", `${filmY.toFixed(1)}px`);
+    root.setProperty("--film-copy-y", `${filmCopyY.toFixed(1)}px`);
+    root.setProperty("--film-copy-opacity", filmCopyOpacity.toFixed(3));
+    root.setProperty("--feed-parallax-y", `${feedY.toFixed(1)}px`);
+    root.setProperty("--feed-title-y", `${feedTitleY.toFixed(1)}px`);
+    root.setProperty("--feed-brand-opacity", feedBrandOpacity.toFixed(3));
+    root.setProperty("--hero-shade-opacity", heroShadeOpacity.toFixed(3));
+    root.setProperty("--feed-shade-opacity", feedShadeOpacity.toFixed(3));
+    document.body.classList.toggle("hero-scrolled", filmActive && scrollTop >= 80);
   });
 }
 
@@ -1752,7 +1751,7 @@ function showSelectedMovie(fromCatalog) {
   $("film-hero").classList.toggle("hero-contain", !form.backdrop || form.backdrop === form.poster);
   showStep(0); // обновить герой-фон и кнопку
   resetRateScrollPosition(keyboardWasOpen);
-  document.documentElement.style.setProperty("--hero-parallax-y", "0px");
+  scheduleHeroParallax();
   scheduleOverviewDisclosure(true);
 }
 
@@ -1785,7 +1784,8 @@ function clearFilm() {
   $("hero-overview").classList.remove("is-collapsed");
   $("btn-overview-toggle").classList.add("hidden");
   overviewExpanded = false;
-  document.documentElement.style.setProperty("--hero-parallax-y", "0px");
+  document.body.classList.remove("hero-scrolled");
+  scheduleHeroParallax();
   $("hero-chips").classList.add("hidden");
   document.querySelector(".hero-fields").classList.remove("hidden");
   resetSearchView();
@@ -2571,7 +2571,7 @@ function feedInsights(films) {
 function feedCard(insight, index) {
   const card = el("button", `feed-card feed-card--${insight.type}`);
   card.type = "button";
-  card.style.setProperty("--feed-index", index);
+  card.style.setProperty("--feed-index", Math.min(index, 4));
   card.style.setProperty("--feed-accent", insight.genre ? genreColor(insight.genre) : "var(--accent)");
 
   const copy = el("span", "feed-card-copy");
@@ -2653,24 +2653,14 @@ function renderFeedHero(film = null) {
     "is-image-loaded",
   );
 
-  const top = el("div", "feed-hero-top");
-  const welcome = el("div", "feed-hero-welcome");
-  welcome.append(el("span", "", feedGreeting()), el("strong", "", profileName()));
-  const avatar = el("div", "feed-hero-avatar");
-  const avatarUrl = profileAvatar();
-  if (avatarUrl) {
-    const image = new Image();
-    image.src = avatarUrl;
-    image.alt = `Фото ${profileName()}`;
-    avatar.append(image);
-  } else {
-    avatar.textContent = profileName().trim().charAt(0).toUpperCase() || "К";
-  }
-  top.append(welcome, avatar);
+  const shade = el("div", "feed-hero-shade");
+  shade.setAttribute("aria-hidden", "true");
+  const brand = el("div", "feed-hero-brand", "SYO");
 
   const open = el("button", "feed-hero-open");
   open.type = "button";
   open.append(
+    el("span", "feed-hero-greeting", `${feedGreeting()}, ${profileName()}`),
     el("span", "feed-hero-label", "Последний просмотр"),
     el("strong", "feed-hero-title", film.title),
     el("span", "feed-hero-meta", `${starsText(film.quality)}  ${toFive(film.quality).toFixed(1)} из 5 · ${film.genre}`),
@@ -2679,7 +2669,8 @@ function renderFeedHero(film = null) {
     haptic("impact", "rigid");
     openDiaryFilm(film);
   });
-  hero.append(top, open);
+  hero.append(shade, brand, open);
+  scheduleHeroParallax();
 }
 
 async function renderFeed() {
@@ -3007,11 +2998,27 @@ function syncProfileAvatar() {
   }
 }
 
+function setProfileBioEditing(editing) {
+  $("profile-bio-view").classList.toggle("hidden", editing);
+  $("profile-bio-editor").classList.toggle("hidden", !editing);
+  $("btn-profile-bio-done").classList.toggle("hidden", !editing);
+  if (editing) requestAnimationFrame(() => $("profile-bio").focus());
+}
+
+function syncProfileBioView() {
+  const bio = $("profile-bio").value.trim();
+  $("profile-bio-text").textContent = bio;
+  $("btn-profile-bio-add").classList.toggle("hidden", !!bio);
+  $("profile-bio-copy").classList.toggle("hidden", !bio);
+}
+
 async function renderProfile() {
   $("profile-name").value = profileName();
   $("profile-bio").value = profile.bio || "";
   profileDraftFavorites = [...(profile.favorites || [])].map(String);
   $("profile-bio-count").textContent = $("profile-bio").value.length;
+  syncProfileBioView();
+  setProfileBioEditing(false);
   syncProfileAvatar();
   const films = await store.getAll();
   renderProfileStats(films);
@@ -3071,7 +3078,7 @@ async function renderProfileFavorites(filmsInput = null) {
   for (let i = favoriteFilms.length; i < 4; i++) {
     const empty = el("button", "favorite-empty");
     empty.type = "button";
-    empty.append(el("span", "", "+"), el("small", "", "Добавить любимый фильм"));
+    empty.append(el("span", "", "+"), el("small", "", "Добавить"));
     empty.addEventListener("click", openFavoritesPicker);
     grid.append(empty);
   }
@@ -3123,6 +3130,8 @@ async function saveProfileFromForm() {
   };
   await saveProfileData(profile);
   syncProfileAvatar();
+  syncProfileBioView();
+  setProfileBioEditing(false);
   haptic("notification", "success");
   const button = $("btn-profile-save");
   button.textContent = "Сохранено ✓";
@@ -3165,6 +3174,7 @@ function buildOnboarding() {
   GENRES.filter((genre) => genre !== "Другое").forEach((genre) => {
     const chip = el("button", "genre-chip", `${GENRE_ICONS[genre]} ${genre}`);
     chip.type = "button";
+    chip.classList.toggle("is-selected", selectedOnboardingGenres.has(genre));
     chip.addEventListener("click", () => {
       if (selectedOnboardingGenres.has(genre)) selectedOnboardingGenres.delete(genre);
       else selectedOnboardingGenres.add(genre);
@@ -3187,6 +3197,12 @@ function showOnboarding() {
   buildOnboarding();
   $("onboarding-step-1").classList.remove("hidden");
   $("onboarding-step-2").classList.add("hidden");
+  $("onboarding-step-3").classList.add("hidden");
+  $("onboarding").setAttribute("aria-labelledby", "onboarding-title");
+  if (!["trusted", "unexpected", "balanced"].includes(selectedFrequency))
+    selectedFrequency = "balanced";
+  document.querySelectorAll("#onboarding-frequency button").forEach((button) =>
+    button.classList.toggle("is-selected", button.dataset.frequency === selectedFrequency));
   $("onboarding").classList.remove("hidden");
   setOnboardingActive(true);
   requestAnimationFrame(() => $("onboarding-title").focus());
@@ -3568,6 +3584,14 @@ $("exit-rate-dialog").addEventListener("cancel", (event) => {
 });
 
 $("btn-profile-save").addEventListener("click", saveProfileFromForm);
+$("btn-profile-bio-add").addEventListener("click", () => setProfileBioEditing(true));
+$("btn-profile-bio-edit").addEventListener("click", () => setProfileBioEditing(true));
+$("btn-profile-bio-done").addEventListener("click", () => {
+  syncProfileBioView();
+  setProfileBioEditing(false);
+  syncProfileDirty();
+  haptic("selection");
+});
 $("profile-bio").addEventListener("input", () => {
   $("profile-bio-count").textContent = $("profile-bio").value.length;
   syncProfileDirty();
@@ -3581,14 +3605,22 @@ document.addEventListener("focusin", (event) => {
   }, 260);
 });
 document.addEventListener("focusout", () => setTimeout(syncKeyboardViewport, 320));
+$("btn-onboarding-start").addEventListener("click", () => {
+  $("onboarding-step-1").classList.add("hidden");
+  $("onboarding-step-2").classList.remove("hidden");
+  $("onboarding").setAttribute("aria-labelledby", "onboarding-genres-title");
+  requestAnimationFrame(() => $("onboarding-genres-title").focus());
+});
 $("btn-onboarding-next").addEventListener("click", () => {
-  if (!selectedOnboardingGenres.size) {
+  if (selectedOnboardingGenres.size < 3) {
     $("onboarding-genres").classList.add("needs-choice");
     haptic("notification", "warning");
     return;
   }
-  $("onboarding-step-1").classList.add("hidden");
-  $("onboarding-step-2").classList.remove("hidden");
+  $("onboarding-genres").classList.remove("needs-choice");
+  $("onboarding-step-2").classList.add("hidden");
+  $("onboarding-step-3").classList.remove("hidden");
+  $("onboarding").setAttribute("aria-labelledby", "onboarding-frequency-title");
   requestAnimationFrame(() => $("onboarding-frequency-title").focus());
 });
 document.querySelectorAll("#onboarding-frequency button").forEach((button) => {
@@ -3600,11 +3632,6 @@ document.querySelectorAll("#onboarding-frequency button").forEach((button) => {
   });
 });
 $("btn-onboarding-finish").addEventListener("click", () => {
-  if (!selectedFrequency) {
-    $("onboarding-frequency").classList.add("needs-choice");
-    haptic("notification", "warning");
-    return;
-  }
   finishOnboarding();
 });
 
@@ -3614,7 +3641,9 @@ async function initApp() {
   const resetResult = await applyResetRequest();
   profile = await loadProfile();
   selectedOnboardingGenres = new Set(profile.genres || []);
-  selectedFrequency = profile.frequency || "";
+  selectedFrequency = ["trusted", "unexpected", "balanced"].includes(profile.frequency)
+    ? profile.frequency
+    : "balanced";
   syncProfileAvatar();
   syncFeelingCards();
   showStep(0);

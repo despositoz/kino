@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>Кинодневник</title>
-<meta name="description" content="Личный кинодневник: оценки, короткие записи и история просмотренного.">
+<title>SYO</title>
+<meta name="description" content="SYO — оценивай фильмы, сохраняй впечатления и наблюдай за своим вкусом.">
 <meta name="theme-color" content="#09090B">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%2309090b'/%3E%3Cpath d='m32 10 6.4 13 14.3 2.1-10.4 10.1 2.5 14.3L32 42.8l-12.8 6.7 2.5-14.3L11.3 25l14.3-2.1Z' fill='%23ff6a2a'/%3E%3C/svg%3E">
@@ -12,7 +12,7 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=syo3">
+<link rel="stylesheet" href="style.css?v=syo4">
 </head>
 <body>
 
@@ -27,9 +27,10 @@
   <div id="head-rate" class="hidden">
     <div class="head-row">
       <button id="btn-back" class="back-btn" type="button" aria-label="Назад"><span class="chev"></span></button>
-      <div>
+      <div class="head-copy">
         <div id="head-title" class="head-title">Фильм</div>
         <div id="head-sub" class="head-sub">Шаг 1 из 4</div>
+        <div id="head-film-compact" class="head-film-compact" aria-hidden="true"></div>
       </div>
     </div>
     <div id="progress" class="progress"><i></i><i></i><i></i><i></i></div>
@@ -44,7 +45,7 @@
   </div>
   <div id="head-profile" class="hidden">
     <div class="head-title">Профиль</div>
-    <div class="head-sub">твоё кино-пространство</div>
+    <div class="head-sub">твоё пространство в SYO</div>
   </div>
 </header>
 
@@ -56,7 +57,7 @@
     <button id="search-scrim" class="search-scrim" type="button" aria-label="Закрыть поиск"></button>
     <div id="film-search">
       <div class="rate-browse-heading">
-        <span>Твой кинодневник</span>
+        <span>SYO</span>
         <h1>Оценить</h1>
         <p>Найди фильм, который посмотрел</p>
       </div>
@@ -86,6 +87,7 @@
     <!-- герой-экран выбранного фильма (тёмный фон включается классом body.hero) -->
     <div id="film-hero" class="hero-wrap hidden">
       <div class="hero-media" aria-hidden="true"></div>
+      <div class="hero-top-shade" aria-hidden="true"></div>
       <div class="hero-bottom">
         <div class="hero-label">Ты оцениваешь</div>
         <div id="hero-title" class="hero-title"></div>
@@ -259,7 +261,15 @@
       <span id="profile-avatar-fallback">К</span>
     </div>
     <label class="profile-field">Имя<input id="profile-name" readonly aria-readonly="true" tabindex="-1"></label>
-    <label class="profile-field">О себе<textarea id="profile-bio" maxlength="160" rows="3" placeholder="Пара слов о твоём вкусе"></textarea><small><span id="profile-bio-count">0</span>/160</small></label>
+    <div id="profile-bio-view" class="profile-bio-view">
+      <button id="btn-profile-bio-add" class="profile-bio-add" type="button">+ Добавить пару слов о вкусе</button>
+      <div id="profile-bio-copy" class="profile-bio-copy hidden">
+        <p id="profile-bio-text"></p>
+        <button id="btn-profile-bio-edit" type="button">Изменить</button>
+      </div>
+    </div>
+    <label id="profile-bio-editor" class="profile-field profile-bio-editor hidden">О себе<textarea id="profile-bio" maxlength="160" rows="3" placeholder="Пара слов о твоём вкусе"></textarea><small><span id="profile-bio-count">0</span>/160</small></label>
+    <button id="btn-profile-bio-done" class="profile-bio-done hidden" type="button">Готово</button>
   </section>
   <section id="profile-stats" class="profile-stats" aria-label="Статистика профиля">
     <div><strong id="profile-stat-total">0</strong><span>оценок</span></div>
@@ -280,22 +290,27 @@
     <div class="onboarding-brand" aria-hidden="true">SYO</div>
     <div class="onboarding-card">
       <div id="onboarding-step-1">
-        <span class="eyebrow">Твой кинодневник</span>
-        <h2 id="onboarding-title" tabindex="-1">Что тебе нравится смотреть?</h2>
-        <p>Выбери несколько жанров. Так первые рекомендации будут точнее.</p>
+        <span class="eyebrow">SYO</span>
+        <h2 id="onboarding-title" tabindex="-1">Кино заканчивается.<br>Впечатления остаются.</h2>
+        <p>Оценивай фильмы, сохраняй мысли и наблюдай за своим вкусом.</p>
+        <button id="btn-onboarding-start" class="primary" type="button">Начать</button>
+      </div>
+      <div id="onboarding-step-2" class="hidden">
+        <span class="eyebrow">SYO</span>
+        <h2 id="onboarding-genres-title" tabindex="-1">Что тебе нравится смотреть?</h2>
+        <p>Выбери хотя бы три жанра.</p>
         <div id="onboarding-genres" class="genre-chips"></div>
         <button id="btn-onboarding-next" class="primary" type="button">Продолжить</button>
       </div>
-      <div id="onboarding-step-2" class="hidden">
-        <span class="eyebrow">Последний вопрос</span>
-        <h2 id="onboarding-frequency-title" tabindex="-1">Как часто ты смотришь кино?</h2>
+      <div id="onboarding-step-3" class="hidden">
+        <span class="eyebrow">Последний штрих</span>
+        <h2 id="onboarding-frequency-title" tabindex="-1">Какие рекомендации тебе ближе?</h2>
         <div id="onboarding-frequency" class="frequency-list">
-          <button type="button" data-frequency="daily">Почти каждый день</button>
-          <button type="button" data-frequency="often">Пару раз в неделю</button>
-          <button type="button" data-frequency="sometimes">Иногда</button>
-          <button type="button" data-frequency="rarely">Редко</button>
+          <button type="button" data-frequency="trusted">Проверенные</button>
+          <button type="button" data-frequency="unexpected">Неожиданные</button>
+          <button type="button" data-frequency="balanced">Баланс</button>
         </div>
-        <button id="btn-onboarding-finish" class="primary" type="button">Открыть кинодневник</button>
+        <button id="btn-onboarding-finish" class="primary" type="button">Открыть SYO</button>
       </div>
     </div>
   </div>
@@ -353,6 +368,6 @@
   </nav>
 </footer>
 
-<script src="app.js?v=syo1"></script>
+<script src="app.js?v=syo2"></script>
 </body>
 </html>
