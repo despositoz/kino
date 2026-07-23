@@ -12,7 +12,7 @@
 <meta name="kino-ai-feed-endpoint" content="https://kino-ai-review.despositoz-kino.workers.dev/feed">
 <!-- официальный скрипт Telegram: даёт window.Telegram.WebApp (тема, облако, кнопки) -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=syo5">
+  <link rel="stylesheet" href="style.css?v=syo6">
 </head>
 <body>
 
@@ -89,23 +89,25 @@
       <div class="hero-media" aria-hidden="true"></div>
       <div class="hero-top-shade" aria-hidden="true"></div>
       <div class="hero-bottom">
-        <div class="hero-label">Ты оцениваешь</div>
-        <div id="hero-title" class="hero-title"></div>
-        <!-- фильм из каталога: год и жанр чипсами -->
-        <div id="hero-chips" class="hero-chips hidden">
-          <span id="chip-year" class="chip"></span>
-          <span id="chip-genre" class="chip"></span>
-          <span id="chip-runtime" class="chip hidden"></span>
-        </div>
-        <p id="hero-director" class="hero-director hidden">Режиссёр · <strong id="hero-director-name"></strong></p>
-        <p id="hero-overview" class="hero-overview hidden"></p>
-        <button id="btn-overview-toggle" class="hero-overview-toggle hidden" type="button" aria-controls="hero-overview" aria-expanded="false">
-          Показать описание
-        </button>
-        <!-- фильм, добавленный вручную: год и жанр вводятся -->
-        <div class="hero-fields">
-          <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
-          <select id="f-genre"></select>
+        <div class="hero-copy">
+          <div class="hero-label">Ты оцениваешь</div>
+          <div id="hero-title" class="hero-title"></div>
+          <!-- фильм из каталога: год и жанр чипсами -->
+          <div id="hero-chips" class="hero-chips hidden">
+            <span id="chip-year" class="chip"></span>
+            <span id="chip-genre" class="chip"></span>
+            <span id="chip-runtime" class="chip hidden"></span>
+          </div>
+          <p id="hero-director" class="hero-director hidden">Режиссёр · <strong id="hero-director-name"></strong></p>
+          <p id="hero-overview" class="hero-overview hidden"></p>
+          <button id="btn-overview-toggle" class="hero-overview-toggle hidden" type="button" aria-controls="hero-overview" aria-expanded="false">
+            Показать описание
+          </button>
+          <!-- фильм, добавленный вручную: год и жанр вводятся -->
+          <div class="hero-fields">
+            <input id="f-year" placeholder="Год" inputmode="numeric" autocomplete="off">
+            <select id="f-genre"></select>
+          </div>
         </div>
       </div>
       <button id="btn-hero-primary" class="primary hero-primary" type="button">Оценить фильм</button>
