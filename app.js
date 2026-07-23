@@ -2636,10 +2636,7 @@ function feedGreeting() {
 
 function feedProfileName() {
   const user = telegramUser();
-  return user.username ||
-    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
-    profile.name ||
-    "Киноман";
+  return user.first_name || profile.name || user.username || "Киноман";
 }
 
 function renderFeedHero(film = null) {
