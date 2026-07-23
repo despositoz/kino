@@ -2634,6 +2634,14 @@ function feedGreeting() {
   return "Добрый вечер";
 }
 
+function feedProfileName() {
+  const user = telegramUser();
+  return user.username ||
+    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
+    profile.name ||
+    "Киноман";
+}
+
 function renderFeedHero(film = null) {
   const hero = $("feed-hero");
   hero.innerHTML = "";
@@ -2660,7 +2668,7 @@ function renderFeedHero(film = null) {
   const open = el("button", "feed-hero-open");
   open.type = "button";
   open.append(
-    el("span", "feed-hero-greeting", `${feedGreeting()}, ${profileName()}`),
+    el("span", "feed-hero-greeting", `${feedGreeting()}, ${feedProfileName()}`),
     el("span", "feed-hero-label", "Последний просмотр"),
     el("strong", "feed-hero-title", film.title),
     el("span", "feed-hero-meta", `${starsText(film.quality)}  ${toFive(film.quality).toFixed(1)} из 5 · ${film.genre}`),

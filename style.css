@@ -537,9 +537,12 @@ body.feed-has-hero #screen-feed { margin-top: 0; }
   cursor: pointer;
 }
 .feed-hero-greeting {
-  margin-bottom: 17px;
-  color: rgba(255, 255, 255, .66);
-  font-size: 13px;
+  margin-bottom: 16px;
+  color: rgba(255, 255, 255, .94);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.012em;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, .68);
 }
 .feed-hero-label {
   color: var(--accent);
@@ -670,13 +673,20 @@ body.feed-has-hero #screen-feed { margin-top: 0; }
   transform: rotate(45deg);
 }
 .feed-poster {
-  width: 72px;
-  min-height: 100px;
+  width: 88px;
+  height: 132px;
+  min-height: 0;
   flex: none;
-  align-self: stretch;
-  border-radius: 11px;
+  align-self: center;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  box-shadow: var(--shadow-poster);
 }
-.feed-card--ai-fact .feed-poster { width: 64px; min-height: 92px; }
+.feed-card--ai-fact .feed-poster {
+  width: 84px;
+  height: 126px;
+  min-height: 0;
+}
 .feed-starter,
 .feed-empty,
 .feed-error {
