@@ -1690,12 +1690,8 @@ function scheduleHeroParallax() {
     const feedBrandOpacity = !reducedMotion && feedActive
       ? Math.max(0, 1 - scrollTop / 190)
       : 1;
-    const heroShadeOpacity = !reducedMotion && filmActive
-      ? Math.min(1, .85 + scrollTop / 500)
-      : .85;
-    const feedShadeOpacity = !reducedMotion && feedActive
-      ? Math.min(1, .84 + scrollTop / 520)
-      : .84;
+    const heroShadeOpacity = 1;
+    const feedShadeOpacity = 1;
     const root = document.documentElement.style;
     root.setProperty("--film-parallax-y", `${filmY.toFixed(1)}px`);
     root.setProperty("--film-copy-y", `${filmCopyY.toFixed(1)}px`);

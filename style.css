@@ -75,8 +75,8 @@
   --feed-parallax-y: 0px;
   --feed-title-y: 0px;
   --feed-brand-opacity: 1;
-  --hero-shade-opacity: .85;
-  --feed-shade-opacity: .84;
+  --hero-shade-opacity: 1;
+  --feed-shade-opacity: 1;
   --pull-distance: 0px;
   --film-hero-height: clamp(420px, 56svh, 540px);
 }
@@ -499,12 +499,14 @@ body.feed-has-hero #screen-feed { margin-top: 0; }
   background:
     var(--shade-vignette),
     linear-gradient(180deg,
-      rgba(5, 5, 6, .92) 0%,
-      rgba(5, 5, 6, .6) 18%,
-      rgba(5, 5, 6, .1) 40%,
-      rgba(5, 5, 6, .16) 58%,
-      rgba(5, 5, 6, .76) 84%,
-      #09090b 100%);
+      #000 0%,
+      #000 18%,
+      rgba(0, 0, 0, .72) 32%,
+      rgba(0, 0, 0, .26) 44%,
+      rgba(0, 0, 0, .14) 56%,
+      rgba(0, 0, 0, .22) 64%,
+      rgba(0, 0, 0, .8) 84%,
+      #000 100%);
   opacity: var(--feed-shade-opacity);
   pointer-events: none;
   will-change: opacity;
@@ -1105,10 +1107,12 @@ body.hero-image-loaded .hero-media::after {
   background:
     var(--shade-vignette),
     linear-gradient(180deg,
-      rgba(9, 9, 11, .97) 0%,
-      rgba(9, 9, 11, .88) 30%,
-      rgba(9, 9, 11, .42) 54%,
-      transparent 74%),
+      #000 0%,
+      #000 22%,
+      rgba(0, 0, 0, .82) 38%,
+      rgba(0, 0, 0, .48) 54%,
+      rgba(0, 0, 0, .2) 70%,
+      transparent 86%),
     var(--shade-bottom);
   opacity: var(--hero-shade-opacity);
   pointer-events: none;
